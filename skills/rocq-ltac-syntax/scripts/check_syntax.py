@@ -356,16 +356,16 @@ def lint_code(
         )
 
     # 12. BLOCK_MISMATCH_SECTION
-    section_re = re.compile(r"\b(Section|End)\s+([A-Za-z0-9_']+)")
-    section_stack: list[tuple[str, int]] = []
-    for match in section_re.finditer(sanitized):
-        kind = match.group(1)
+    block_re = re.compile(r"\b(Section|Module(?:\s+Type)?|End)\s+([A-Za-z0-9_']+)")
+    block_stack: list[tuple[str, int]] = []
+    for match in block_re.finditer(sanitized):
+        token = match.group(1)
         name = match.group(2)
-        if kind == "Section":
-            section_stack.append((name, match.start()))
-        elif kind == "End":
-            if section_stack:
-                expected_name, start_idx = section_stack.pop()
+        if token in ("Section", "Module") or token.startswith("Module"):
+            block_stack.append((name, match.start()))
+        elif token == "End":
+            if block_stack:
+                expected_name, _start_idx = block_stack.pop()
                 if expected_name != name:
                     line, col = get_line_col(raw_code, match.start())
                     diagnostics.append(
@@ -374,7 +374,7 @@ def lint_code(
                             "column": col,
                             "rule": "BLOCK_MISMATCH_SECTION",
                             "severity": "error",
-                            "message": f"Section delimiter mismatch: Expected 'End {expected_name}', but found 'End {name}'.",
+                            "message": f"Block delimiter mismatch: Expected 'End {expected_name}', but found 'End {name}'.",
                         }
                     )
             else:
@@ -385,10 +385,10 @@ def lint_code(
                         "column": col,
                         "rule": "BLOCK_MISMATCH_SECTION",
                         "severity": "error",
-                        "message": f"Unmatched 'End {name}' statement without an opening Section.",
+                        "message": f"Unmatched 'End {name}' statement without an opening Section or Module.",
                     }
                 )
-    for unclosed_name, start_pos in section_stack:
+    for unclosed_name, start_pos in block_stack:
         line, col = get_line_col(raw_code, start_pos)
         diagnostics.append(
             {
@@ -396,7 +396,7 @@ def lint_code(
                 "column": col,
                 "rule": "BLOCK_MISMATCH_SECTION",
                 "severity": "error",
-                "message": f"Unclosed Section '{unclosed_name}' at EOF.",
+                "message": f"Unclosed Section or Module '{unclosed_name}' at EOF.",
             }
         )
 
