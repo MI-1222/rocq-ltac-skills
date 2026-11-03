@@ -323,11 +323,11 @@ def lint_code(
         )
 
     # 11. BLOCK_MISMATCH_MATCH_END
-    match_end_re = re.compile(r"\b(match|end)\b")
+    match_end_re = re.compile(r"\b(match|lazymatch|multimatch|end)\b")
     match_stack: list[int] = []
     for match in match_end_re.finditer(sanitized):
         token = match.group(1)
-        if token == "match":
+        if token in ("match", "lazymatch", "multimatch"):
             match_stack.append(match.start())
         elif token == "end":
             if match_stack:
