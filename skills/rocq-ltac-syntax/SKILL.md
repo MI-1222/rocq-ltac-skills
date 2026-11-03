@@ -1,6 +1,6 @@
 ---
 name: rocq-ltac-syntax
-description: Comprehensive Gallina and Pure Vanilla Ltac syntax specification, fast static linter, and soundness contract validator for Rocq (formerly Coq) formal verification. Use whenever writing, editing, formatting, or validating Rocq (.v) source files, preventing SSReflect dialect contamination (e.g., `move=>`, `by []`, `have:`, `//`), enforcing sentence terminator spacing (`. ` / `.\n`), validating bullet hierarchies (`-`, `+`, `*`), preventing Goal Drift (Header Fence immutability), blocking unapproved axioms or admitted proofs, or running `scripts/check_syntax.py`.
+description: Comprehensive Gallina and Pure Vanilla Ltac syntax specification, fast static linter, and soundness contract validator for Rocq (formerly Coq) formal verification. Use whenever writing, editing, formatting, or validating Rocq (.v) source files, preventing SSReflect dialect contamination (e.g., `move=>`, `by []`, `have:`, `//`), enforcing sentence terminator spacing (`. ` / `.\n`), validating bullet hierarchies (`-`, `+`, `*`), blocking legacy tactics (`omega`, `romega`, `sos`), migrating legacy namespaces (`From Coq` to `From Corelib` / `From Stdlib`), enforcing bracketed attributes (`#[local]`, `#[global]`, `#[export]`), validating modern universe polymorphism (`Univ@{...}`), preventing Goal Drift (Header Fence immutability), blocking unapproved axioms or admitted proofs, or running `scripts/check_syntax.py`.
 compatibility: Target Rocq 9.0+ (Backward compatible with Coq 8.20). Requires Python 3.10+ for scripts/check_syntax.py.
 metadata:
   target-prover: 'Rocq 9.0+ / Coq 8.20'
@@ -11,9 +11,9 @@ metadata:
 
 # Rocq Ltac Syntax & Discipline Guide
 
-This skill provides the definitive syntax specification, lexical disciplines, and an automated static verification tool (`scripts/check_syntax.py`) for formal program and semantics verification in Rocq (formerly Coq) using **Pure Vanilla Ltac**.
+This skill provides the definitive syntax specification, lexical disciplines, and an automated static verification tool (`scripts/check_syntax.py`) for formal software verification, programming language semantics, and type systems in Rocq (formerly Coq) using **Pure Vanilla Ltac**.
 
-In Rocq, lexical analysis, vernacular commands, and tactic execution are tightly coupled. Minor syntactic faults—such as missing spaces after periods, misplaced dots on focus bullets, unclosed pattern matches, or dialect mixing—abort compilation before the proof engine can evaluate steps. Adhere strictly to this specification to produce syntactically clean and mechanically sound Rocq code.
+In Rocq, lexical analysis, vernacular commands, and tactic execution are tightly coupled. Lexical errors (such as missing spaces after periods, misplaced dots on focus bullets, unclosed comments/strings, or dialect mixing) immediately abort compilation before the proof engine can evaluate proof states. Adhere strictly to this specification to produce syntactically robust and mechanically sound Rocq code.
 
 ---
 
@@ -21,17 +21,19 @@ In Rocq, lexical analysis, vernacular commands, and tactic execution are tightly
 
 | Component            | Target / Supported              | Notes                                                                                        |
 | :------------------- | :------------------------------ | :------------------------------------------------------------------------------------------- |
-| **Rocq Prover**      | `9.0+` (Default target)         | Uses `From Stdlib Require Import ...` and unified `rocq` CLI.                                |
+| **Rocq Prover**      | `9.0+` (Default target)         | Uses `From Corelib` / `From Stdlib Require Import ...` and unified `rocq` CLI.               |
 | **Coq (Legacy)**     | `8.20` (Compatibility baseline) | Uses `From Coq Require Import ...`. Versions $\le 8.17$ are unsupported.                     |
 | **Language Dialect** | **Pure Vanilla Ltac 100%**      | **SSReflect/MathComp syntax is strictly prohibited.** Ltac2 dynamic generation is forbidden. |
 | **Python**           | `>= 3.10`                       | Standard library only (`re`, `json`, `sys`, `pathlib`, `argparse`). No third-party packages. |
 
-### Critical Version-Specific Adjustments
+### Critical Version-Specific Adjustments (Rocq 9.0+)
 
-- **Namespace Renaming (`Stdlib` vs `Coq`)**: In Rocq 9.0+, standard libraries reside under `From Stdlib Require Import ...`. Writing `From Coq` triggers `deprecated-from-Coq` warnings. In Coq 8.20, `From Stdlib` fails to resolve; stick to project-level configuration (`_CoqProject`) standards.
-- **Attributes (`#[...]`)**: Attributes are fully standardized in Rocq 9.0+. Always annotate hint locality explicitly: `#[local] Hint Resolve ...` or `#[export] Hint Resolve ...`. Bare `Hint` commands outside sections are rejected or trigger deprecation errors.
-- **Arithmetic Decisions**: `omega` was completely removed in Coq 8.14. Always import `Lia` and use `lia.`.
-- **Top-Level Keywords & Proof Delimiters**: Always place `Proof.`, `Qed.`, `Defined.`, and `Abort.` on dedicated individual lines. Never attach tactics directly onto the same line as `Proof.`.
+- **Namespace Migration (`Corelib` / `Stdlib` vs `Coq`)**: In Rocq 9.0+, standard libraries are split and reorganized. Foundational prelude items reside in `Corelib`, while general standard libraries reside in `Stdlib`. Writing `From Coq` triggers `deprecated-from-Coq` or environment warnings. In legacy Coq 8.20, `From Stdlib` fails to resolve; use project-level `_CoqProject` settings to manage paths.
+- **Environment Variables**: `COQPATH` is deprecated in favor of `ROCQPATH`.
+- **Bracketed Attribute Syntax (`#[...]`)**: Attribute syntax is strictly standardized. Legacy prefix modifiers (`Local Definition`, `Global Hint`, `Export Instance`) are deprecated. Always use explicit bracketed attributes: `#[local]`, `#[global]`, `#[export]`, or `#[deprecated(...)]`.
+- **Universe Polymorphism Syntax**: The legacy syntax `Type@{s;l}` triggers `deprecated-type-sort-poly-syntax`. Modern Rocq 9.0+ requires `Univ@{s;l}`.
+- **Removed Tactics**: The integer decision procedure `omega` (along with `romega` and `sos`) is completely removed. Always import `Lia` and use `lia.` (or `nia.` for non-linear expressions, pairing with `zify` when necessary).
+- **Proof Delimiters**: Always place `Proof.`, `Qed.`, `Defined.`, and `Abort.` on dedicated standalone lines. Never concatenate tactics onto the same line as `Proof.`.
 
 ---
 
@@ -41,178 +43,242 @@ In Rocq, lexical analysis, vernacular commands, and tactic execution are tightly
 graph LR
   subgraph "Tier 0: Static Syntax Gate (Phase 1)"
     A[Rocq Code Entry] --> B[Dialect Check: 100% Vanilla Ltac]
-    B --> C[Lexical Check: Terminator `. `]
-    C --> D[Contract Check: Header Fence]
+    B --> C[Lexical Check: Terminator & Strings/Comments]
+    C --> D[Modernization Check: Attributes & Namespaces]
+    D --> E[Contract Check: Header Fence & Soundness]
   end
-  D --> E[PASS]
+  E --> F[PASS]
 
-  A -.-> F[FAIL]
-  B -.-> F
-  C -.-> F
-  D -.-> F
+  A -.-> X[FAIL]
+  B -.-> X
+  C -.-> X
+  D -.-> X
+  E -.-> X
 ```
 
 ### 1. Pure Vanilla Ltac 100% (No SSReflect Contamination)
 
-Rocq proof scripts for software verification, type systems, and operational semantics must be formulated strictly in Vanilla Ltac. Mixing SSReflect tokens (`move=>`, `by []`, `have:`, `//`) without loading `ssreflect` causes instant parser crashes (`Syntax error: [ident] expected`).
+Rocq verification code must be written strictly in Vanilla Ltac. SSReflect tokens (`move=>`, `by []`, `have:`, `//`, `congr`) without importing `ssreflect` cause immediate fatal parser crashes (`Syntax error: [ident] expected`).
 
-| Operation                      | ❌ FORBIDDEN (SSReflect) | ✅ MANDATORY (Vanilla Ltac)            |
-| :----------------------------- | :----------------------- | :------------------------------------- |
-| **Hypothesis Introduction**    | `move=> x y H.`          | `intros x y H.`                        |
-| **Destructuring Introduction** | `move=> [x [y H]].`      | `intros [x [y H]].`                    |
-| **Immediate Terminal Solve**   | `by [].` / `done.`       | `now auto.` / `reflexivity.` / `easy.` |
-| **Forward Assertion**          | `have H: P by ...`       | `assert (H : P) by ...`                |
-| **Backward Sufficiency**       | `suff: P by ...`         | `enough (H : P) by ...`                |
-| **Branch Trivial Discharge**   | `//`                     | `; try easy.` / `; auto.`              |
-| **Simplification**             | `/=`                     | `simpl.` / `cbn.`                      |
-| **Outer Congruence**           | `congr f.`               | `f_equal.`                             |
-| **Inductive Decomposition**    | `elim: n => [\| n' IH].` | `induction n as [\| n' IH].`           |
-| **Reverting to Target**        | `move: x.`               | `revert x.`                            |
+| **Operation**                | **❌ FORBIDDEN (SSReflect)** | **✅ MANDATORY (Vanilla Ltac)**        | **Rationale**                                |
+| ---------------------------- | ---------------------------- | -------------------------------------- | -------------------------------------------- |
+| **Hypothesis Introduction**  | `move=> x y H.`              | `intros x y H.`                        | Moves binders into local context.            |
+| **Destructuring Intro**      | `move=> [x [y H]].`          | `intros [x [y H]].`                    | Pattern-matches conjunctions/existentials.   |
+| **Terminal Discharge**       | `by [].` / `done.`           | `now auto.` / `reflexivity.` / `easy.` | Solves trivial goals immediately.            |
+| **Forward Assertion**        | `have H: P by ...`           | `assert (H : P) by ...`                | Introduces an intermediate assertion.        |
+| **Backward Sufficiency**     | `suff: P by ...`             | `enough (H : P) by ...`                | Proves target via stronger prerequisite.     |
+| **Branch Trivial Discharge** | `//`                         | `; try easy.` / `; auto.`              | Solves side goals across branches.           |
+| **Simplification**           | `/=`                         | `simpl.` / `cbn.`                      | Computes definitional reductions.            |
+| **Outer Congruence**         | `congr f.`                   | `f_equal.`                             | Strips identical outermost function symbols. |
+| **Inductive Step**           | `elim: n => [\| n' IH].`     | `induction n as [\| n' IH].`           | Applies structural induction.                |
+| **Reverting to Target**      | `move: x.`                   | `revert x.`                            | Pushes hypothesis back into target formula.  |
 
-### 2. Sentence Terminator Spacing (`. ` or `.\n`)
+### 2. Lexer Specifications: Sentence Terminators, Comments & Strings
 
-In Rocq's lexer, a period is recognized as a sentence terminator **ONLY** if it is followed immediately by whitespace, a tab, a newline, or EOF.
+#### A. Sentence Terminator (`.` or `.\n`)
+
+A period is recognized as a command/tactic terminator **if and only if it is immediately followed by whitespace ( , `\t`, `\n`, `\r`) or EOF**.
 
 - ❌ **Broken**: `intros x.induction x.` (Parsed as a single invalid token `x.induction`)
 - ❌ **Broken**: `Theorem foo : 1 = 1.Proof.` (Parsed as invalid identifier `1.Proof`)
-- ✅ **Correct**: `intros x. induction x.` or separate across newlines.
+- ✅ **Correct**: `intros x. induction x.` or separated across lines.
+- **Exceptions**: Periods in qualified identifiers (`Module.submodule`, `Record.field`), decimal numbers, or within strings/comments do not terminate sentences.
+
+#### B. Comment Nesting (`(* ... *)`)
+
+Comments are delimited by `(*` and `*)` and support **arbitrary recursive nesting**.
+
+- Nested opening `(*` increments depth; closing `*)` decrements depth.
+- Unterminated comments (unmatched `(*` reaching EOF) raise `Syntax Error: Lexer: Unterminated comment`.
+
+#### C. String Literals & Escaping (`"..."`)
+
+Strings are enclosed in double quotes `"..."` and may span multiple lines.
+
+- Double quotes inside strings are escaped by **doubling them (`""`)**, NOT by backslash (`\"`).
+- Unclosed strings reaching EOF raise `Syntax Error: Lexer: Unterminated string`.
 
 ### 3. Bullet Selector Disciplines (`-`, `+`, `*`)
 
-Bullets structure branching proofs. They are proof-engine selectors, not vernacular sentences.
+Bullets focus subgoals during branching proofs. They are selector tokens, not vernacular sentences.
 
 - ❌ **Broken**: Placing a period immediately after a bullet: `-. reflexivity.` or `+. lia.`
-- ❌ **Broken**: Transitioning to a sibling bullet while previous subgoals remain open (`Error: Wrong bullet -: Current bullet - is not finished.`).
-- ✅ **Correct**: Bare bullets `-`, `+`, `*`, `--`, `++`, `**`. For deep nesting (> 3 levels), wrap subgoals in explicit curly braces `{ ... }` without trailing dots.
+- ❌ **Broken**: Declaring a sibling bullet before the current branch is closed (`Error: Wrong bullet -: Current bullet - is not finished.`).
+- ✅ **Correct**: Bare bullets `-`, `+`, `*`, `--`, `++`, `**`.
+- For deep branch hierarchies (> 3 levels), wrap subgoals in explicit curly braces `{ ... }` without trailing dots.
 
-### 4. Structural Pairing & Termination
+### 4. Modernization: Attributes, Namespaces & Tactics
 
-- **`match ... with ... end`**: Every Gallina `match` and Ltac `match goal with` must have an explicit closing `end`.
-- **`Fixpoint` Decreasing Arguments**: Always provide `{struct <arg>}` whenever a recursive function takes multiple arguments, preventing `Cannot guess decreasing argument of fix`.
-- **Mode Separation**: Never place Ltac tactics inside Gallina term assignments (`:=`). Program terms use Gallina expressions; lemmas and theorems use `Proof. ... Qed.`.
+- **Bracketed Attributes**: Always declare locality via `#[local]`, `#[global]`, or `#[export]`.
+  - ❌ **Deprecated**: `Local Hint Resolve foo : core.` / `Global Instance bar : Baz.`
+  - ✅ **Mandatory**: `#[local] Hint Resolve foo : core.` / `#[global] Instance bar : Baz.`
+- **Modern Namespaces**:
+  - ❌ **Deprecated (Rocq 9.0+)**: `From Coq Require Import Arith.`
+  - ✅ **Mandatory (Rocq 9.0+)**: `From Stdlib Require Import Arith.`
+  - ✅ **Foundational Modules**: `From Corelib Require Import ...`
+- **Eliminate Legacy Tactics**:
+  - ❌ **Removed**: `omega`, `romega`, `sos`.
+  - ✅ **Mandatory**: `lia.` (linear integer arithmetic) or `nia.` (non-linear integer arithmetic).
 
----
+### 5. Structural Pairing & Termination
+
+- **`match ... with ... end`**: Every Gallina pattern-match and Ltac `match goal with` must be closed with an explicit `end`.
+- **`Fixpoint` Decreasing Arguments**: Always supply `{struct <arg>}` when recursive functions have multiple arguments to prevent `Cannot guess decreasing argument of fix`.
+- **Mode Isolation**: Never embed Ltac tactics inside Gallina term definitions (`:=`). Program terms use Gallina expressions; lemmas and theorems use `Proof. ... Qed.`.
 
 ## 2. Contract Invariance (Header Fence) & Soundness
 
-To prevent autonomous agents from hallucinating proofs or weakening target specifications to achieve false passes (Reward Hacking), adhere strictly to these integrity gates:
+To ensure mechanical rigor and eliminate AI proof hallucination or specification weakening (Reward Hacking), adhere strictly to these rules:
 
 1. **Header Fence (Goal Drift Prohibition)**:
-   - The theorem signature—starting from `Theorem`, `Lemma`, `Corollary`, `Proposition`, `Fact`, or `Remark` up to the colon `:` and the closing period `.` before `Proof.`—is an **immutable contract**.
-   - NEVER alter binders, add contradictory premises (e.g., `False ->`), change conclusion terms, or rename declarations.
-2. **Docstring Scoping**:
-   - Existing specification docstrings (`(** [SPEC] ... *)`) are frozen. Never modify, weaken, or delete them.
+   - The entire theorem header—from the declaration keyword (`Theorem`, `Lemma`, `Corollary`, `Proposition`, `Fact`, `Remark`) up to the colon `:` and the closing period `.` before `Proof.`—is an **immutable contract**.
+   - NEVER alter binders, inject contradictory premises (e.g., `False ->`), alter return types, or rename declarations.
+2. **Docstring Immutability**:
+   - Specification comments (`(** [SPEC] ... *)`) are frozen. Never edit, delete, or relocate them.
 3. **Soundness Leaks**:
-   - `Admitted.` and `admit.` are strictly rejected in final deliverables.
-   - Introducing new `Axiom`, `Conjecture`, or `Parameter` declarations to bypass verification is treated as a fatal failure.
-
----
+   - `admit.` and `Admitted.` are strictly forbidden in final deliverables.
+   - Introducing unapproved `Axiom`, `Conjecture`, or `Parameter` declarations is treated as an immediate soundness failure.
 
 ## 3. Fast Static Syntax Checker (`scripts/check_syntax.py`)
 
-A zero-dependency Python script (`scripts/check_syntax.py`) provides Tier 0 linting before invoking the compiler. It parses nested comments `(* ... *)` and string literals `""` into a column-preserving sanitized buffer to eliminate false positives.
+The skill bundles `scripts/check_syntax.py`, a zero-dependency script relying exclusively on the Python standard library. It performs robust Tier 0 linting before invoking heavy compiler binaries.
+
+### Lexical Sanitization Algorithm
+
+To eliminate false positives, `check_syntax.py` executes a two-pass sanitization:
+
+1. **String Masking**: Replaces double-quoted strings (`"(?:""|[^"])*"`) with spaces while preserving linebreaks.
+2. **Comment Masking**: Tracks recursive comment depth `(* ... *)` with a stack counter, converting all enclosed characters to spaces while maintaining exact line and column indices.
+3. **Sentence Tokenization**: Splits sentences on `SENTENCE_TERMINATOR_RE = re.compile(r'\.(\s|$)')` over the sanitized buffer.
 
 ### CLI Usage
 
-```bash
+```Bash
 # Check a single Rocq source file
 python3 skills/rocq-ltac-syntax/scripts/check_syntax.py theories/Semantics.v
 
-# Pipe code via standard input
+# Read source code from standard input (pipeline mode)
 cat theories/Semantics.v | python3 skills/rocq-ltac-syntax/scripts/check_syntax.py --stdin
 
 # Verify an inline snippet directly
 python3 skills/rocq-ltac-syntax/scripts/check_syntax.py -s "Theorem foo : 1 = 1. Proof. reflexivity. Qed."
 
-# Structured JSON output for automated agent pipelines
+# Output structured JSON for autonomous agent pipelines
 python3 skills/rocq-ltac-syntax/scripts/check_syntax.py theories/Semantics.v --json
 
 # Strict submission mode (rejects any temporary 'admit' tactics)
 python3 skills/rocq-ltac-syntax/scripts/check_syntax.py theories/Semantics.v --strict --json
-
 ```
 
-### Diagnostics Rules & JSON Schema
+### Static Rule Catalog
 
-| Rule ID                            | Severity            | Violation Condition                                                    |
-| ---------------------------------- | ------------------- | ---------------------------------------------------------------------- |
-| `FORBIDDEN_SSREFLECT`              | `error`             | SSReflect syntax detected (`move=>`, `by []`, `have:`, `suff:`, etc.). |
-| `SYNTAX_PERIOD_NO_SPACE`           | `error`             | Period terminator lacking trailing whitespace or newline.              |
-| `SYNTAX_INVALID_BULLET_DOT`        | `error`             | Focus bullet directly attached to a period (e.g., `-.` or `+.`).       |
-| `BLOCK_MISMATCH_MATCH_END`         | `error`             | Mismatch between `match` opening and `end` closing keywords.           |
-| `BLOCK_MISMATCH_SECTION`           | `error`             | Mismatched `Section <name>` and `End <name>` identifiers.              |
-| `DEPRECATED_OMEGA`                 | `error`             | Deprecated `omega` detected. Replace with `lia`.                       |
-| `DEPRECATED_HINT_WITHOUT_LOCALITY` | `error`             | Hint declaration missing `#[local]` or `#[export]`.                    |
-| `SOUNDNESS_AXIOM_DETECTED`         | `error`             | Unapproved `Axiom` or `Parameter` declared.                            |
-| `SOUNDNESS_ADMIT_DETECTED`         | `error` / `warning` | Residual `admit` or `Admitted.` (Error under `--strict`).              |
+| **Rule ID**                  | **Severity**      | **Description & Target Pattern**                                                                           |
+| ---------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| `FORBIDDEN_SSREFLECT`        | `error`           | SSReflect syntax detected (`move=>`, `by []`, `have:`, `suff:`, `//`, `congr`).                            |
+| `SYNTAX_PERIOD_NO_SPACE`     | `error`           | Sentence terminator period missing trailing space, newline, or EOF.                                        |
+| `SYNTAX_INVALID_BULLET_DOT`  | `error`           | Focus bullet directly attached to a period (`-.`, `+.`, `*.`).                                             |
+| `LEXER_UNTERMINATED_COMMENT` | `error`           | Unmatched `(*` reaching EOF without closing `*)`.                                                          |
+| `LEXER_UNTERMINATED_STRING`  | `error`           | String literal missing closing quote `"` at EOF.                                                           |
+| `BLOCK_MISMATCH_MATCH_END`   | `error`           | Count mismatch between `match` and `end` keywords.                                                         |
+| `BLOCK_MISMATCH_SECTION`     | `error`           | Mismatch between `Section <name>` and `End <name>` identifiers.                                            |
+| `DEPRECATED_TACTICS`         | `error`           | Deprecated tactic (`omega`, `romega`, `sos`). Replace with `lia` or `nia`.                                 |
+| `DEPRECATED_BARE_ATTRIBUTES` | `warning`         | Legacy attribute prefix (e.g., `Local Hint`, `Global Instance`). Use `#[local]`, `#[global]`, `#[export]`. |
+| `LEGACY_NAMESPACE`           | `warning`         | Legacy `From Coq` imported. In Rocq 9.0+, use `From Corelib` or `From Stdlib`.                             |
+| `DEPRECATED_UNIV_SYNTAX`     | `warning`         | Legacy universe syntax `Type@{...}`. Use `Univ@{...}`.                                                     |
+| `SOUNDNESS_AXIOM_DETECTED`   | `error`           | Unapproved `Axiom`, `Conjecture`, or `Parameter` declared.                                                 |
+| `SOUNDNESS_ADMIT_DETECTED`   | `error`/`warning` | Residual `admit.` or `Admitted.` (Always fatal under `--strict`).                                          |
 
-```json
+### Structured JSON Output Schema
+
+```JSON
 {
   "file": "theories/Semantics.v",
   "status": "fail",
-  "error_count": 1,
-  "warning_count": 0,
+  "error_count": 2,
+  "warning_count": 1,
   "diagnostics": [
+    {
+      "line": 15,
+      "column": 1,
+      "rule": "LEGACY_NAMESPACE",
+      "severity": "warning",
+      "message": "Use of 'From Coq' is deprecated. In Rocq 9.0+, use 'From Corelib' or 'From Stdlib'."
+    },
     {
       "line": 42,
       "column": 5,
       "rule": "SYNTAX_INVALID_BULLET_DOT",
       "severity": "error",
       "message": "Focus bullet must not be followed by a period. Change '-.' to '-'."
+    },
+    {
+      "line": 88,
+      "column": 3,
+      "rule": "DEPRECATED_TACTICS",
+      "severity": "error",
+      "message": "Tactic 'omega' was removed in modern Rocq. Use 'lia' instead."
     }
   ]
 }
 ```
 
----
+## 2. Fast Prover Syntax Checklist
 
-## 4. Verification & Editing Workflow
+Before running file compilation or sub-goal stepping, verify code against this checklist:
 
-When generating or editing Rocq proofs, always follow this verification sequence:
+### Stage A: Lexical & Dialect Integrity
+
+- [ ] **Pure Vanilla Ltac**: Zero occurrences of `move=>`, `by []`, `have:`, `suff:`, or `//`.
+- [ ] **Terminator Spacing**: Every vernacular statement and Ltac tactic ends with a period followed by a space or newline (`.` or `.\n`).
+- [ ] **Balanced Delimiters**: All comments `(* ... *)`, string literals `"..."`, and `match ... with ... end` blocks are properly closed.
+- [ ] **Clean Bullets**: No bullets have trailing periods (`-.`). All branch subgoals are fully closed before starting a sibling bullet.
+
+### Stage B: Modernization & Attribute Rules
+
+- [ ] **Modern Namespaces**: Imports use `From Stdlib Require Import ...` or `From Corelib Require Import ...` (avoiding legacy `From Coq` in Rocq 9.0+).
+- [ ] **Bracketed Attributes**: All `Hint`, `Instance`, or locality flags use `#[local]`, `#[global]`, or `#[export]`.
+- [ ] **Modern Arithmetic**: All integer linear arithmetic uses `lia.` (no `omega`, `romega`, or `sos`).
+- [ ] **Modern Universes**: Any polymorphic universe specification uses `Univ@{...}` instead of `Type@{...}`.
+
+### Stage C: Contract & Soundness Invariants
+
+- [ ] **Header Fence Intact**: The original lemma/theorem declaration signature before `Proof.` has not been altered (no Goal Drift).
+- [ ] **Docstrings Preserved**: Existing `(** [SPEC] ... *)` docstrings are completely untouched.
+- [ ] **No Soundness Leaks**: Zero occurrences of `admit.`, `Admitted.`, or unapproved `Axiom` / `Parameter` declarations.
+
+## 3. Verification & Editing Workflow
+
+Always follow this multi-tiered verification sequence:
 
 ```mermaid
-graph LR
-  subgraph "Phase 1: Static Syntax Gate (T0)"
-    A[Edit .v File] --> B[Run check_syntax.py]
-    B --> C{Errors Found?}
-    C -- Yes --> A
-    C -- No --> D[Pass]
-  end
-
-  subgraph "Phase 2: Interactive Proof Gate (T1)"
-    D --> E[Run rocq_goal.py]
-    E --> F{Goals Closed?}
-    F -- No --> E
-    F -- Yes --> G[Pass]
-  end
-
-  subgraph "Phase 3: Build & Soundness Gates (T2)"
-    G --> H[Run run_build.py]
-    H --> I[Run audit_axioms.py]
-    I --> J{Verified?}
-    J -- No --> E
-    J -- Yes --> K[Complete]
-  end
+graph TD
+  A[Edit .v File] --> B["Tier 0: Syntax Gate<br/><code>check_syntax.py --json</code>"]
+  B --> C{"Errors Found?"}
+  C -- Yes --> D["Fix syntax / dialect / attributes in-place"]
+  D --> A
+  C -- No --> E["Tier 1: Interactive Goal Inspection<br/><code>rocq_goal.py</code> (rocq-ltac-interactive-proof)"]
+  E --> F{"Subgoals Solved?"}
+  F -- No --> G["Adjust tactics / repair proofs"]
+  G --> E
+  F -- Yes --> H["Tier 2 & 3: Compilation & Soundness<br/><code>run_build.py</code> & <code>audit_axioms.py</code> (rocq-ltac-cli)"]
+  H --> I{"Soundness Verified?"}
+  I -- No --> G
+  I -- Yes --> J["Task Completed (Sound & Verified)"]
 ```
 
-1. **Draft/Edit**: Apply tactics adhering strictly to Vanilla Ltac rules.
-2. **Run Tier 0 Check**: Run `python3 skills/rocq-ltac-syntax/scripts/check_syntax.py <file.v> --json`. If diagnostics contain errors, repair them immediately without calling compiler binaries.
-3. **Step-by-Step Goal Tracking**: Once Tier 0 passes, dispatch to `rocq-ltac-interactive-proof` (`rocq_goal.py`) to verify proof state transitions.
-4. **Final Compilation & Audit**: When all goals are closed, run `rocq-ltac-cli` to execute project builds and verify kernel-level soundness via `Print Assumptions`.
+1. **Draft/Edit**: Apply tactics adhering strictly to Pure Vanilla Ltac rules.
+2. **Execute Tier 0 Check**: Run `python3 skills/rocq-ltac-syntax/scripts/check_syntax.py <file.v> --json`. If diagnostics contain errors, repair them immediately without launching compiler processes.
+3. **Interactive Step Verification**: Dispatch to `rocq-ltac-interactive-proof` (`rocq_goal.py`) to verify proof state transitions and subgoal discharges.
+4. **Build & Soundness Audit**: Run `rocq-ltac-cli` (`run_build.py` and `audit_axioms.py`) to execute full compilation and ensure the theorem is verified under `Closed under the global context`.
 
----
+## 4. Progressive Reference Guides
 
-## 5. Specialized Reference Routing
+When encountering specific syntax traps or migration hurdles, consult the specialized guides under `references/`:
 
-When encountering specific syntax traps or version incompatibilities, consult the dedicated documentation under `references/`:
-
-- **Gallina & Vanilla Ltac Core Grammar**:
-  `references/syntax_rules.md` — Complete syntax patterns for inductive types, records, pattern matching, and standard forward/backward Ltac tactics.
-- **Lexical Gotchas & Formatting Traps**:
-  `references/syntax_gotchas.md` — Deep dive into period collisions, nested comments, bullet tree invariants, and dependent return types (`match ... return ...`).
-- **Coq 8.x to Rocq 9.x Compatibility**:
-  `references/coq_to_rocq_version_diff.md` — Import migration paths (`From Coq` to `From Stdlib`), attribute modernizations, and CLI mapping (`coqc` to `rocq compile`).
-- **Header Fence & Anti-Cheating Invariants**:
-  `references/header_fence_and_integrity.md` — Formal integrity specifications, Goal Drift detection mechanisms, and sound assertion practices.
-- **SSReflect to Vanilla Ltac Translation**:
-  `references/ssreflect_to_vanilla_ltac.md` — Comprehensive translation dictionary converting SSReflect/MathComp idioms into idiomatic Pure Vanilla Ltac.
+| **Topic**                     | **Key Focus & Techniques**                                                             | **Guide**                                                                                                 |
+| ----------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **Gallina & Ltac Grammar**    | Inductive types, records, pattern matching, core forward/backward Ltac tactics         | [syntax_rules.md](./references/syntax_rules.md)                             |
+| **Lexical Gotchas & Traps**   | Nested comment invariants, string escapes (`""`), period collisions, bullet structures | [syntax_gotchas.md](./references/syntax_gotchas.md)                         |
+| **Rocq 9.0+ Migration**       | `From Stdlib`/`Corelib` mapping, bracketed attributes (`#[...]`), `lia` vs `omega`     | [coq_to_rocq_version_diff.md](./references/coq_to_rocq_version_diff.md)     |
+| **Header Fence & Soundness**  | Immutability protocols, Goal Drift prevention, docstring preservation rules            | [header_fence_and_integrity.md](./references/header_fence_and_integrity.md) |
+| **SSReflect to Vanilla Ltac** | Comprehensive translation dictionary converting SSReflect tokens to Vanilla Ltac       | [ssreflect_to_vanilla_ltac.md](./references/ssreflect_to_vanilla_ltac.md)   |
