@@ -291,7 +291,7 @@ def lint_code(
         )
 
     # 9. SOUNDNESS_AXIOM_DETECTED
-    axiom_re = re.compile(r"\b(Axiom|Conjecture|Parameter)\s+([A-Za-z0-9_']+)")
+    axiom_re = re.compile(r"\b(Axioms?|Conjectures?|Parameters?)\s+([A-Za-z0-9_']+)")
     for match in axiom_re.finditer(sanitized):
         line, col = get_line_col(raw_code, match.start())
         kind = match.group(1)
