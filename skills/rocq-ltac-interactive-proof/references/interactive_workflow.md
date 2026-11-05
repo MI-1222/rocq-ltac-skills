@@ -43,7 +43,7 @@ Bullets (`-`, `+`, `*`, `--`, `++`, `**`) enforce proof structure by structuring
 
 ### Golden Rules for Bullets
 
-1. **Never Append Periods to Bullets**: Bullets are independent lexer tokens, NOT vernacular commands. Writing `-.` or `+.` causes immediate syntax errors:
+1. **Never Append Periods to Bullets**: Bullets are independent lexer tokens, NOT vernacular commands. Bullets are defined as standalone syntactic constructs. Writing `-.` or `+.` causes immediate syntax errors:
    - ❌ **Broken**: `-. reflexivity.`
    - ✅ **Correct**: `- reflexivity.`
 2. **Strict Hierarchy Ordering**: Do not mix bullet types at the same indentation level. Use the standard ascending hierarchy:
@@ -81,7 +81,7 @@ Qed.
 
 ## 3. Scoping Focus Braces (`{ ... }`) for Goal Isolation
 
-Curly braces `{ ... }` focus entirely on the first subgoal, hiding all other subgoals and hypotheses from other branches until the enclosed subproof is completed with closing `}`.
+Curly braces `{ ... }` focus entirely on the first subgoal, hiding all other subgoals and hypotheses from other branches until the enclosed subproof is completed with closing `}`. `{` and `}` are defined as standalone vernacular transitions that do not require period terminators.
 
 ### When to Use Braces
 
@@ -124,7 +124,7 @@ When Rocq encounters a bullet error or unexpected subgoals, follow this determin
 
 ---
 
-## 5. Proof Termination Sequence (`Qed.` / `Defined.`)
+## 5. Proof Termination Sequence (`Qed.` / `Defined.`) & Soundness Verification
 
 A proof is not complete until it has passed the formal termination checkpoint and soundness validation.
 
@@ -140,4 +140,4 @@ A proof is not complete until it has passed the formal termination checkpoint an
    ```bash
    python3 skills/rocq-ltac-cli/scripts/audit_axioms.py --module <Logical.Path> --theorem <TheoremName>
    ```
-   A valid proof must yield `Axioms: <none>` or depend only on whitelisted foundational axioms.
+   A valid proof must yield `Axioms: <none>` or depend only on whitelisted foundational axioms (evaluating strictly to `Closed under the global context`).

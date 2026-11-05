@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """rocq_goal.py - Zero-dependency interactive proof state extractor and REPL controller.
 
-Provides sentence-level lexing, stateless/stateful subshell execution (rocq top / coqtop),
-goal and hypothesis parsing, inline Vernacular query execution, and soundness cheat detection.
+Provides sentence-level lexing, stateless subshell execution (rocq top / coqtop),
+goal and hypothesis parsing with multiline normalization, inline Vernacular query
+execution with native output limits, and soundness cheat detection.
 """
 
 from __future__ import annotations
@@ -42,9 +43,9 @@ class Sentence:
 
 
 class RocqLexer:
-    """Robust lexer state machine for Rocq/Coq source code."""
+    """Robust lexer state machine for Rocq 9.0+ syntax."""
 
-    BULLET_REGEX = re.compile(r"^(\++|\-+|\*+)(?=\s|$)")
+    BULLET_CHARS = ("-", "+", "*")
 
     @classmethod
     def split_sentences(cls, code: str) -> list[Sentence]:
@@ -66,27 +67,26 @@ class RocqLexer:
                 current_line += 1
 
             if state == LexerState.CODE:
-                # Check for comment opening: (*
+                # Comment opening: (*
                 if char == "(" and next_char == "*":
                     state = LexerState.COMMENT
                     comment_depth = 1
                     i += 2
                     continue
 
-                # Check for string literal opening: "
+                # String literal opening: "
                 if char == '"':
                     state = LexerState.STRING
                     i += 1
                     continue
 
-                # Check for single-character braces { or }
+                # Single-character braces { or } as standalone vernacular statements
                 if char in ("{", "}"):
                     prefix = code[current_start:i].strip()
                     if not prefix:
-                        sent_text = char
                         sentences.append(
                             Sentence(
-                                text=sent_text,
+                                text=char,
                                 start_pos=i,
                                 end_pos=i + 1,
                                 line_number=current_line,
@@ -99,29 +99,31 @@ class RocqLexer:
                         start_line = current_line
                         continue
 
-                # Check for bullets (+, -, *) at word boundary
-                remaining = code[i:]
-                bullet_match = cls.BULLET_REGEX.match(remaining)
-                if bullet_match and (i == 0 or code[i - 1].isspace()):
+                # Bullet sequences (-, +, *) as standalone vernacular statements
+                if char in cls.BULLET_CHARS:
                     prefix = code[current_start:i].strip()
                     if not prefix:
-                        b_str = bullet_match.group(1)
+                        b_char = char
+                        bullet_end = i
+                        while bullet_end < n and code[bullet_end] == b_char:
+                            bullet_end += 1
+                        b_str = code[i:bullet_end]
                         sentences.append(
                             Sentence(
                                 text=b_str,
                                 start_pos=i,
-                                end_pos=i + len(b_str),
+                                end_pos=bullet_end,
                                 line_number=current_line,
                                 is_bullet_or_brace=True,
                                 contains_admit=False,
                             )
                         )
-                        i += len(b_str)
+                        i = bullet_end
                         current_start = i
                         start_line = current_line
                         continue
 
-                # Check for terminating period followed by space, newline, EOF, or comment
+                # Terminating period: must be followed by whitespace, EOF, or comment start
                 if char == ".":
                     is_term = False
                     if (
@@ -155,7 +157,7 @@ class RocqLexer:
             elif state == LexerState.STRING:
                 if char == '"':
                     if next_char == '"':
-                        # Escaped quote inside string
+                        # Escaped quote inside string literal ("")
                         i += 2
                         continue
                     state = LexerState.CODE
@@ -318,70 +320,119 @@ class RocqExecutor:
 class ProofStateParser:
     """Parses terminal output into structured proof goals, hypotheses, and errors."""
 
-    RE_GOAL_SEP = re.compile(r"^\s*={10,}\s*$", re.MULTILINE)
+    # Rocq defines the goal separator bar as exactly 28 equals signs
+    RE_GOAL_SEP = re.compile(r"^\s*={28}\s*$", re.MULTILINE)
+    RE_GOAL_SEP_FALLBACK = re.compile(r"^\s*={10,}\s*$", re.MULTILINE)
+
+    # Standard header format: "No more goals." or "N goals"
     RE_SUBGOAL_COUNT = re.compile(r"(\d+)\s+(?:sub)?goals?", re.IGNORECASE)
+    RE_BG_GOAL = re.compile(
+        r"^(?:sub)?goal\s+(\d+)\s+is:", re.MULTILINE | re.IGNORECASE
+    )
+
+    # Error prefixes routed to stderr or echoed in stdout
     RE_ERROR = re.compile(
         r"^(Error:|Syntax error:|User error:)(.*)", re.MULTILINE | re.DOTALL
     )
+
+    # Special warnings and uninstantiated evars
     RE_EVAR = re.compile(
-        r"(uninstantiated existential variables|has been shelved|shelved)",
-        re.IGNORECASE,
+        r"(dependent evars:|uninstantiated existential variables)", re.IGNORECASE
+    )
+    RE_SHELVED = re.compile(r"\(shelved:\s*(\d+)\)", re.IGNORECASE)
+    RE_GIVEN_UP = re.compile(r"there are some goals you gave up", re.IGNORECASE)
+
+    # Prompt line matching toplevel or proofmode prompts
+    RE_PROMPT = re.compile(
+        r"^(?:Rocq|Coq|[A-Za-z_][A-Za-z0-9_']*(?:\s+\(focused\))?)\s*<\s*",
+        re.MULTILINE,
     )
 
     @classmethod
-    def parse_goals(cls, output: str) -> dict[str, Any]:
+    def parse_goals(cls, stdout_output: str, stderr_output: str = "") -> dict[str, Any]:
         """Extract structured proof state from raw terminal text."""
         result: dict[str, Any] = {
             "is_done": False,
             "has_error": False,
             "error_message": None,
             "subgoal_count": 0,
+            "background_goals": [],
             "hypotheses": [],
             "target": None,
             "has_evar_warning": False,
+            "shelved_count": 0,
+            "has_given_up_warning": False,
             "raw_state": "",
         }
 
-        err_match = cls.RE_ERROR.search(output)
+        # Check stderr and stdout for errors
+        combined_output = f"{stdout_output}\n{stderr_output}".strip()
+        err_match = cls.RE_ERROR.search(stderr_output) or cls.RE_ERROR.search(
+            stdout_output
+        )
         if err_match:
             result["has_error"] = True
             result["error_message"] = err_match.group(0).strip()
-            result["raw_state"] = output.strip()
+            result["raw_state"] = combined_output
             return result
 
         if (
-            "No more goals." in output
-            or "No more subgoals." in output
-            or "Proof completed." in output
+            "No more goals." in stdout_output
+            or "No more subgoals." in stdout_output
+            or "Proof completed." in stdout_output
         ):
             result["is_done"] = True
             result["subgoal_count"] = 0
-            result["raw_state"] = output.strip()
+            result["raw_state"] = combined_output
             return result
 
-        if cls.RE_EVAR.search(output):
+        # Check for Evars and shelved goals
+        if cls.RE_EVAR.search(stdout_output) or cls.RE_EVAR.search(stderr_output):
             result["has_evar_warning"] = True
 
-        # Match the last occurrence of subgoal/goal count
-        count_matches = list(cls.RE_SUBGOAL_COUNT.finditer(output))
+        shelved_match = cls.RE_SHELVED.search(stdout_output)
+        if shelved_match:
+            result["shelved_count"] = int(shelved_match.group(1))
+
+        if cls.RE_GIVEN_UP.search(stdout_output):
+            result["has_given_up_warning"] = True
+
+        # Extract latest subgoal count
+        count_matches = list(cls.RE_SUBGOAL_COUNT.finditer(stdout_output))
         if count_matches:
             result["subgoal_count"] = int(count_matches[-1].group(1))
-        elif "1 subgoal" in output.lower() or "1 goal" in output.lower():
+        elif "1 subgoal" in stdout_output.lower() or "1 goal" in stdout_output.lower():
             result["subgoal_count"] = 1
 
-        parts = cls.RE_GOAL_SEP.split(output)
-        if len(parts) >= 2:
-            pre_context = parts[-2]
-            post_context = parts[-1]
+        # Extract background goals (e.g. goal 2 is:, goal 3 is:)
+        bg_matches = list(cls.RE_BG_GOAL.finditer(stdout_output))
+        result["background_goals"] = [int(m.group(1)) for m in bg_matches]
 
-            # Find starting index after "N goal(s)" or "N subgoal(s)" if present
+        # Locate goal separator line (28 equals signs or fallback)
+        sep_matches = list(cls.RE_GOAL_SEP.finditer(stdout_output))
+        if not sep_matches:
+            sep_matches = list(cls.RE_GOAL_SEP_FALLBACK.finditer(stdout_output))
+
+        if sep_matches:
+            last_sep = sep_matches[-1]
+            pre_context = stdout_output[: last_sep.start()]
+            post_context = stdout_output[last_sep.end() :]
+
+            # Find starting index after the latest "N goal(s)" header in pre_context
             raw_pre_lines = pre_context.strip().splitlines()
             start_idx = 0
             for idx, line in enumerate(raw_pre_lines):
-                if re.search(r"\b\d+\s+(?:sub)?goals?\b", line, re.IGNORECASE):
+                if cls.RE_SUBGOAL_COUNT.search(line):
                     start_idx = idx + 1
 
-            hypo_lines: list[str] = []
+            # Normalize hypotheses (stitch multiline wrapped types)
+            hyps: list[str] = []
+            cur_hyp = ""
+            # Regex for start of a new hypothesis: "H : Type" or "x, y : nat" or "x := val : Type"
+            hyp_start_pattern = re.compile(
+                r"^[A-Za-z_][A-Za-z0-9_']*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_']*)*\s*(?::=|:)\s*"
+            )
+
             for line in raw_pre_lines[start_idx:]:
                 line_str = line.strip()
                 if not line_str:
@@ -396,9 +447,21 @@ class ProofStateParser:
                     continue
                 if "subgoal" in line_str.lower() and "is:" not in line_str:
                     continue
-                hypo_lines.append(line_str)
-            result["hypotheses"] = hypo_lines
 
+                if hyp_start_pattern.match(line_str):
+                    if cur_hyp:
+                        hyps.append(cur_hyp)
+                    cur_hyp = line_str
+                elif cur_hyp:
+                    cur_hyp += " " + line_str
+                else:
+                    cur_hyp = line_str
+
+            if cur_hyp:
+                hyps.append(cur_hyp)
+            result["hypotheses"] = hyps
+
+            # Extract target conclusion up to the next background goal header or prompt
             target_lines: list[str] = []
             for line in post_context.strip().splitlines():
                 line_str = line.strip()
@@ -406,51 +469,72 @@ class ProofStateParser:
                     continue
                 if line_str.endswith("<") or line_str.startswith(("Coq <", "Rocq <")):
                     break
-                if re.match(r"^(?:sub)?goal \d+ is:", line_str, re.IGNORECASE):
+                if cls.RE_BG_GOAL.match(line_str):
                     break
                 if (
                     "no more goals" in line_str.lower()
-                    or "there are some goals you gave up" in line_str.lower()
+                    or "goals you gave up" in line_str.lower()
                 ):
                     break
                 target_lines.append(line_str)
             result["target"] = "\n".join(target_lines).strip()
 
-        result["raw_state"] = output.strip()
+        result["raw_state"] = combined_output
         return result
 
     @classmethod
     def parse_search_results(
         cls, output: str, max_results: int = 30
     ) -> list[dict[str, str]]:
-        """Parse Vernacular Search query outputs into identifier-statement pairs."""
+        """Parse Vernacular Search query outputs into identifier-statement pairs.
+
+        Restricts parsing exclusively to output following the final goal state or
+        final 'No more goals.' declaration to prevent hypothesis pollution.
+        """
         results: list[dict[str, str]] = []
         current_ident: str | None = None
         current_stmt: list[str] = []
 
-        # Find where Search output starts (after Rocq < Search ...)
-        lines = output.splitlines()
-        in_search = False
+        # Find position after the final goal separator or 'No more goals'
+        search_start_char = 0
+        sep_matches = list(cls.RE_GOAL_SEP.finditer(output)) or list(
+            cls.RE_GOAL_SEP_FALLBACK.finditer(output)
+        )
+        if sep_matches:
+            search_start_char = sep_matches[-1].end()
+
+        no_more_goals_idx = output.rfind("No more goals.")
+        if (
+            no_more_goals_idx != -1
+            and no_more_goals_idx + len("No more goals.") > search_start_char
+        ):
+            search_start_char = no_more_goals_idx + len("No more goals.")
+
+        search_slice = output[search_start_char:]
+        lines = search_slice.splitlines()
 
         for line in lines:
             line_str = line.strip()
             if not line_str:
                 continue
 
-            if not in_search:
-                if re.search(r"(?:Rocq|Coq)\s*<\s*Search\b", line):
-                    in_search = True
+            # Skip REPL prompts or loading messages
+            if cls.RE_PROMPT.match(line_str) or line_str.endswith("<"):
+                continue
+            if line_str.startswith(
+                ("Error:", "Syntax error:", "Warning:", "[Loading ML")
+            ):
+                continue
+            if cls.RE_GOAL_SEP_FALLBACK.match(line_str) or cls.RE_SUBGOAL_COUNT.search(
+                line_str
+            ):
                 continue
 
-            # Check for return to prompt
-            if re.match(r"^[a-zA-Z0-9_\-\'\.]*\s*<\s*$", line_str):
-                break
-
-            if line_str.startswith(("Error:", "Syntax error:")):
-                continue
-
-            # New lemma identifier typically starts at column 0 or has format "ident: stmt"
-            ident_match = re.match(r"^([a-zA-Z0-9_\'\.]+)\s*:\s*(.*)$", line_str)
+            # New lemma identifier: ident: statement
+            ident_match = re.match(
+                r"^([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)\s*:\s*(.*)$",
+                line_str,
+            )
             if ident_match:
                 if current_ident:
                     results.append(
@@ -466,7 +550,7 @@ class ProofStateParser:
                 stmt_part = ident_match.group(2).strip()
                 current_stmt = [stmt_part] if stmt_part else []
             elif current_ident:
-                # Continuation of multiline statement
+                # Continuation line of multi-line statement (indented)
                 current_stmt.append(line_str)
 
         if current_ident and len(results) < max_results:
@@ -476,29 +560,6 @@ class ProofStateParser:
                     "statement": " ".join(current_stmt).strip(),
                 }
             )
-
-        # Fallback if no Search marker was detected but search lines exist
-        if not results:
-            for line in lines:
-                line_str = line.strip()
-                if (
-                    not line_str
-                    or line_str.endswith("<")
-                    or line_str.startswith(("Coq <", "Rocq <"))
-                ):
-                    continue
-                if line_str.startswith(("Error:", "Syntax error:", "[Loading ML")):
-                    continue
-                m = re.match(r"^([a-zA-Z0-9_\'\.]+)\s*:\s*(.+)$", line_str)
-                if m:
-                    results.append(
-                        {
-                            "identifier": m.group(1).strip(),
-                            "statement": m.group(2).strip(),
-                        }
-                    )
-                    if len(results) >= max_results:
-                        break
 
         return results
 
@@ -606,7 +667,7 @@ def main() -> None:
         command_texts, timeout=args.timeout
     )
 
-    state_res = ProofStateParser.parse_goals(stdout)
+    state_res = ProofStateParser.parse_goals(stdout, stderr)
     if exit_code != 0 and not state_res["has_error"]:
         state_res["has_error"] = True
         state_res["error_message"] = stderr.strip() or stdout.strip()
@@ -639,8 +700,12 @@ def main() -> None:
             print("[SUCCESS] Proof complete (No more goals).")
         else:
             print(f"Subgoals remaining: {state_res['subgoal_count']}")
+            if state_res.get("background_goals"):
+                print(f"Background subgoals: {state_res['background_goals']}")
             if state_res.get("has_evar_warning"):
-                print("[WARNING] Existential variables / shelved goals detected!")
+                print("[WARNING] Existential variables / evars detected!")
+            if state_res.get("shelved_count", 0) > 0:
+                print(f"[WARNING] Shelved goals detected: {state_res['shelved_count']}")
             print("--- Hypotheses ---")
             for h in state_res["hypotheses"]:
                 print(f"  {h}")

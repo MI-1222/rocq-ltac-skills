@@ -1,6 +1,6 @@
 # Vernacular Query Reference & Lemma Search Guide
 
-This reference documents the query commands available in the Rocq (formerly Coq) environment—`Search`, `Locate`, `About`, `Check`, and `Print`. It establishes guidelines for querying lemma databases and inspecting definitions while minimizing context window consumption.
+This reference documents the query commands available in the Rocq (formerly Coq) environment—`Search`, `Locate`, `About`, `Check`, and `Print`.
 
 ---
 
@@ -10,7 +10,7 @@ In autonomous formal verification, running broad or unconstrained search queries
 
 ### Operational Principles
 
-1. **Constrain First**: Always qualify search patterns with positional modifiers (`concl:`, `hyp:`) or target types before executing.
+1. **Constrain First**: Always qualify search patterns with positional modifiers (`concl:`, `headconcl:`, `hyp:`, `headhyp:`) or target types before executing.
 2. **Limit Result Counts**: By default, `scripts/rocq_goal.py` limits search results to 25 entries (`--max-search 25`).
 3. **Two-Stage Lookup for Notations**: When encountering an unfamiliar symbol (such as `++`, `==>`, or `|->`), never query it directly with `Search`. First execute `Locate "<symbol>"` to identify the canonical underlying identifier, then query that identifier with `Search`.
 4. **Inspect Arguments Before Applying**: Before issuing an `apply my_lemma` tactic, inspect its implicit argument structure using `About my_lemma.` to avoid argument count mismatch errors.
@@ -24,20 +24,21 @@ The `Search` vernacular command searches loaded libraries for lemmas and constan
 ### Syntax Specification
 
 ```coq
-Search query_pattern+ [inside | in | outside qualid+]? .
+Search query_item+ [inside [ qualid+ ] | outside [ qualid+ ] | in Top]? .
 ```
 
-### Key Query Modifiers
+### Complete Query Modifiers Table
 
-| Pattern / Modifier         | Syntax Example                                | Meaning                                                                                    |
-| :------------------------- | :-------------------------------------------- | :----------------------------------------------------------------------------------------- |
-| **Gallina Term Pattern**   | `Search (_ + _ <= _ + _).`                    | Matches any lemma containing addition within an inequality.                                |
-| **Non-Linear Pattern**     | `Search (?x + ?y = ?y + ?x).`                 | Matches commutativity patterns where terms `?x` and `?y` are identical.                    |
-| **Conclusion Filter**      | `Search concl:(_ <= _).`                      | Restricts search to lemmas whose conclusion is an inequality (ideal for backward `apply`). |
-| **Head Conclusion Filter** | `Search headconcl:le.`                        | Matches lemmas whose conclusion head constant is `le`.                                     |
-| **Hypothesis Filter**      | `Search hyp:(_ = _).`                         | Matches lemmas that require an equality hypothesis.                                        |
-| **Negation Filter**        | `Search Nat.add -Nat.mul.`                    | Includes lemmas mentioning `Nat.add` while excluding any mentioning `Nat.mul`.             |
-| **Disjunction (OR)**       | `Search [ concl:(_ = _) \| concl:(_ <> _) ].` | Matches lemmas concluding in either equality or disequality.                               |
+| Pattern / Modifier                 | Syntax Example                                | Meaning                                                                                    |
+| :--------------------------------- | :-------------------------------------------- | :----------------------------------------------------------------------------------------- |
+| **Gallina Term Pattern**           | `Search (_ + _ <= _ + _).`                    | Matches any lemma containing addition within an inequality.                                |
+| **Non-Linear Pattern**             | `Search (?x + ?y = ?y + ?x).`                 | Matches commutativity patterns where terms `?x` and `?y` are unified.                      |
+| **Conclusion Filter (`concl:`)**   | `Search concl:(_ <= _).`                      | Restricts search to lemmas whose conclusion is an inequality (ideal for backward `apply`). |
+| **Head Conclusion (`headconcl:`)** | `Search headconcl:le.`                        | Matches lemmas whose conclusion head constant is `le`.                                     |
+| **Hypothesis Filter (`hyp:`)**     | `Search hyp:(_ = _).`                         | Matches lemmas that require an equality hypothesis.                                        |
+| **Head Hypothesis (`headhyp:`)**   | `Search headhyp:gt.`                          | Matches lemmas that require a hypothesis whose head symbol is `gt`.                        |
+| **Negation Filter (`-`)**          | `Search Nat.add -Nat.mul.`                    | Includes lemmas mentioning `Nat.add` while excluding any mentioning `Nat.mul`.             |
+| **Disjunction (`[ ... \| ... ]`)** | `Search [ concl:(_ = _) \| concl:(_ <> _) ].` | Matches lemmas concluding in either equality or disequality.                               |
 
 ### Practical Search Recipes
 
@@ -73,11 +74,11 @@ By default, `Search` searches across all currently loaded modules. Restricting m
 
 ### Scope Modifiers
 
-1. **`inside <ModulePath>`**: Restricts results exclusively to definitions in the specified library or module hierarchy:
+1. **`inside [ <ModulePath> ... ]`**: Restricts results exclusively to definitions in the specified library or module hierarchy:
    ```coq
    Search concl:(_ <= _) inside Stdlib.Arith.PeanoNat.Nat.
    ```
-2. **`outside <ModulePath>`**: Excludes standard library definitions or legacy modules:
+2. **`outside [ <ModulePath> ... ]`**: Excludes standard library definitions or legacy modules:
    ```coq
    Search (_ + _) outside Stdlib.Reals.
    ```
@@ -143,7 +144,7 @@ Arguments eq_trans [A]%type_scope {x y z} (e1 e2)%core_scope
 
 ### Argument Annotations
 
-| Notation    | Kind                            | Caller Responsibility                                                           |
+| Notation    | Argument Kind                   | Caller Responsibility                                                           |
 | :---------- | :------------------------------ | :------------------------------------------------------------------------------ |
 | `[ A ]`     | **Maximally Inserted Implicit** | Automatically inferred even without arguments following. Never pass explicitly. |
 | `{ x y z }` | **Standard Implicit Argument**  | Inferred from context when subsequent explicit arguments are supplied.          |

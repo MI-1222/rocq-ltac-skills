@@ -101,10 +101,13 @@ When `--json` is supplied, the tool produces structured diagnostics matching thi
   "is_done": false,
   "has_error": false,
   "error_message": null,
-  "subgoal_count": 1,
+  "subgoal_count": 2,
+  "background_goals": [2],
   "hypotheses": ["n : nat", "m : nat", "H : n <= m"],
   "target": "n + 0 <= m + 0",
   "has_evar_warning": false,
+  "shelved_count": 0,
+  "has_given_up_warning": false,
   "soundness_violation": null,
   "search_results": [
     {
@@ -118,8 +121,12 @@ When `--json` is supplied, the tool produces structured diagnostics matching thi
 
 - `is_done`: `true` only when all goals are cleared AND no cheat tokens (`admit`, `give_up`) exist in the executed prefix.
 - `subgoal_count`: Count of active subgoals remaining.
-- `hypotheses`: Clean array of local hypotheses active in the focused goal.
+- `background_goals`: Indices of background pending goals (e.g., `[2, 3]`).
+- `hypotheses`: Clean array of local hypotheses active in the focused goal, with multiline wrapped statements normalized.
 - `target`: The proposition to be proven for the focused goal.
+- `has_evar_warning`: Flags if existential variables (`?X` or `(dependent evars: ...)`) are present.
+- `shelved_count`: Number of shelved goals (`(shelved: N)`).
+- `has_given_up_warning`: Flags if `give_up` / `admit` was executed.
 - `soundness_violation`: Populated if `admit` or `Admitted` is detected, explicitly forcing `is_done: false`.
 
 ---
