@@ -189,6 +189,112 @@ Qed.
 
 ---
 
+### Case 4: Automating Contradiction Rejection (`solve_by_inverts` & Recovery)
+
+In semantic systems with many typing or transition rules, non-matching constructor hypotheses frequently arise. Automated inversion macros discharge these by attempting recursive `inversion; subst; discriminate`.
+
+**Helper Macro Definition:**
+
+```Coq
+Ltac solve_by_invert_step :=
+  match goal with
+  | H : _ |- _ => solve [ inversion H; subst; discriminate ]
+  end.
+
+Ltac solve_by_inverts n :=
+  match n with
+  | S ?n' => solve_by_invert_step || (
+      match goal with
+      | H : _ |- _ => inversion H; subst; clear H; solve_by_inverts n'
+      end)
+  | O => fail "Depth exhausted"
+  end.
+```
+
+**Diagnosing `No matching clauses for match goal`:**
+
+When `solve_by_inverts n` fails:
+
+1. **Depth Exhaustion**: The contradiction requires more inversions than depth $n$ allows (e.g., intermediate syntax wrapping). Increase depth from 2 to 3, or manually invert the outer wrapper first.
+2. **Missing Invertible Premise**: The contradiction requires an equality or predicate that is not yet introduced into the context. Ensure premises are brought into scope (`intros`) before calling the macro.
+3. **Manual Fallback**: Identify the exact conflicting hypothesis $H$ and execute:
+   ```Coq
+   inversion H; subst; clear H; try discriminate.
+   ```
+
+---
+
+### Case 5: Boolean Reflection & Case Splitting (`reflect` vs `bdestruct`)
+
+When branching on computable comparison operations (e.g., `n =? m`, `n <=? m`, `string_dec`), directly analyzing booleans with `destruct (n =? m)` yields boolean flags without equality hypotheses in `Prop`.
+
+**Failing Code (Before - Lost Propositional Equality):**
+
+```Coq
+From Stdlib Require Import Nat.
+
+Lemma eqb_example : forall n m : nat, (n =? m) = true -> n = m.
+Proof.
+  intros n m H.
+  destruct (n =? m).
+  - (* We know the flag was true, but n = m is NOT introduced into context! *)
+Abort.
+```
+
+**Repaired Code (After - Recording Equations via `eqn:` or Reflection Spec):**
+
+1. **Explicit Equation Recording**:
+   ```Coq
+   destruct (n =? m) eqn:Heq.
+   - apply Nat.eqb_eq in Heq. exact Heq.
+   - discriminate H.
+   ```
+2. **Using Reflection Lemmas Directly (`_spec`)**:
+   ```Coq
+   destruct (Nat.eqb_spec n m) as [Heq | Hneq].
+   - exact Heq.
+   - (* In false branch, Hneq : n <> m *)
+     discriminate H.
+   ```
+3. **Recovery when Custom Reflection Tactics (e.g., `bdestruct`) Fail**:
+   If a reflection macro fails with `No matching clauses for match goal`, the comparison operator is not registered in the macro's pattern list. Deconstruct the expression manually:
+   ```Coq
+   destruct (target_expr) eqn:Heq; [apply op_spec in Heq | ...].
+   ```
+
+---
+
+### Case 6: Preventing Over-Substitution in Environment & Map Updates
+
+In operational semantics and compilers using functional maps or association lists (`x |-> v; Gamma`), running unconditional `subst` can replace recently updated keys with older shadowed definitions if both share equality hypotheses.
+
+**Anti-Pattern:**
+
+```Coq
+(* Context has:
+   H1 : x = y
+   H2 : update (update m x v1) y v2 = m' *)
+subst.
+(* Indiscriminate substitution may overwrite shadowed variable names unpredictably *)
+```
+
+**Repaired Code (Controlled Rewriting via Lemmas):**
+
+Instead of bare `subst`, rewrite systematically using environment theorems:
+
+```Coq
+(* Update on same key shadows previous value *)
+rewrite update_shadow in H.
+(* Updates on distinct keys commute *)
+rewrite update_permute in H by auto.
+(* Reading most recent update *)
+rewrite update_eq.
+(* Reading distinct key *)
+rewrite update_neq by auto.
+```
+
+---
+
 ## 5. Fallback Procedures
 
 1. **Decidable Equality Elimination (`Eqdep_dec`)**:

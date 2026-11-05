@@ -203,6 +203,182 @@ Use `lazymatch goal` when backtracking over alternative hypothesis bindings is n
 
 ---
 
+### Case 5: Taming Simplification Blowup (`simpl` vs `cbn [fn]` & Unfold Lemmas)
+
+Running unconditional `simpl` on functions that use accumulator arguments, fuel counters, or complex pattern matching can aggressively unroll definitions into massive, unreadable nested `match` expressions that freeze the compiler.
+
+**Failing Code (Before - Simplification Blowup):**
+
+```Coq
+Fixpoint eval_step (fuel : nat) (st : state) (c : cmd) : option state :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match c with
+      | CSkip => Some st
+      | CSeq c1 c2 =>
+          match eval_step fuel' st c1 with
+          | Some st' => eval_step fuel' st' c2
+          | None => None
+          end
+      (* More branches ... *)
+      end
+  end.
+
+Lemma eval_step_extend : forall fuel st c st',
+  eval_step fuel st c = Some st' ->
+  eval_step (S fuel) st c = Some st'.
+Proof.
+  intros fuel st c st' H.
+  simpl.
+  (* Disastrous: unrolls every recursive call into hundreds of nested match clauses *)
+Abort.
+```
+
+**Repaired Code (After - Controlled Reduction via `cbn` or Unfold Lemmas):**
+
+1. **Targeted Reduction with `cbn`**:
+   ```Coq
+   (* Restrict reduction strictly to the outer fuel constructor: *)
+   cbn [eval_step].
+   ```
+2. **Step Unfolding Lemma**:
+   Prove an explicit one-step unrolling equation and rewrite with it instead of reducing:
+
+   ```Coq
+   Lemma eval_step_S : forall fuel st c,
+     eval_step (S fuel) st c =
+       match c with
+       | CSkip => Some st
+       | CSeq c1 c2 =>
+           match eval_step fuel st c1 with
+           | Some st' => eval_step fuel st' c2
+           | None => None
+           end
+       end.
+   Proof. reflexivity. Qed.
+
+   (* In proof: *)
+   rewrite eval_step_S.
+   destruct c; [reflexivity | ...].
+   ```
+
+---
+
+### Case 6: Preventing Unresolved Existential Variables in `eauto` (The Evar Trap)
+
+When applying lemmas with intermediate existential parameters (such as transitive relations or typing rules with unconstrained intermediate types `?T`), `eauto` or `eapply` may bind an incorrect term to the existential variable or leave it uninstantiated, causing `Cannot solve goal with existential variables` at `Qed`.
+
+**Failing Code (Before):**
+
+```Coq
+(* Rule: has_type Gamma (t_app t1 t2) T2
+         requires has_type Gamma t1 (t_arrow T1 T2) and has_type Gamma t2 T1 *)
+Lemma app_typing_example : forall Gamma t1 t2 T2,
+  has_type Gamma (t_app t1 t2) T2.
+Proof.
+  intros.
+  eapply T_App.
+  (* Created existential variable ?T1 for the domain type *)
+  eauto.
+  (* eauto binds ?T1 erroneously or leaves it unresolved, failing later *)
+Abort.
+```
+
+**Repaired Code (After - Supplying Witnesses or Explicit Instantiation):**
+
+1. **Explicitly Instantiate Intermediate Witnesses**:
+   ```Coq
+   (* Explicitly name the domain type: *)
+   eapply T_App with (T1 := Nat_Type).
+   - apply Ht1.
+   - apply Ht2.
+   ```
+2. **Extract Existential Hypotheses Before Automation**:
+   When hypotheses contain existential quantifiers, destruct them into concrete variables before invoking `eauto`:
+   ```Coq
+   destruct H_exists as [witness H_prop].
+   eapply Rule; [exact H_prop | eauto].
+   ```
+
+---
+
+### Case 7: Equivalence Rewriting in High-Order Contexts (Setoid Rewrite Failures)
+
+When rewriting with equivalence relations (e.g., `Permutation l1 l2`) under custom or nested functions, standard `rewrite` fails with `Cannot find a relation to rewrite` if no `Proper` morphism is declared for the context.
+
+**Failing Code (Before):**
+
+```Coq
+From Stdlib Require Import Sorting.Permutation.
+
+Lemma perm_insert_example : forall (x a : nat) (l : list nat),
+  Permutation (x :: l) (insert x l) ->
+  Permutation (a :: x :: l) (a :: insert x l).
+Proof.
+  intros x a l H.
+  (* Direct rewrite may fail if custom constructors wrap the list *)
+  rewrite H.
+Abort.
+```
+
+**Repaired Code (After - Manual Transitivity & Constructor Steps):**
+
+Apply constructor congruence lemmas or bridge via explicit transitivity:
+
+```Coq
+From Stdlib Require Import Sorting.Permutation.
+
+Lemma perm_insert_example : forall (x a : nat) (l : list nat),
+  Permutation (x :: l) (insert x l) ->
+  Permutation (a :: x :: l) (a :: insert x l).
+Proof.
+  intros x a l H.
+  (* Use direct constructor preservation: *)
+  apply perm_skip.
+  exact H.
+Qed.
+
+Lemma perm_trans_bridge : forall (x a : nat) (l : list nat),
+  Permutation (x :: a :: l) (insert x (a :: l)).
+Proof.
+  intros x a l.
+  (* Bridge through intermediate permutation via transitivity: *)
+  apply Permutation_trans with (a :: x :: l).
+  - apply perm_swap.
+  - apply perm_insert_example. apply perm_insert_base.
+Qed.
+```
+
+---
+
+### Case 8: Discharging Hidden Invariants in Linear Arithmetic
+
+`lia` operates on linear integer arithmetic but cannot inspect inside higher-order predicates, tree structures, or abstract predicates (e.g., binary search tree invariants `ForallT (fun y => y < x) tree`).
+
+**Failing Code (Before):**
+
+```Coq
+(* Context contains:
+   H_bst : ForallT (fun y => y < x) left_tree
+   H_in : InTree k left_tree
+   Goal : k < x *)
+lia. (* Fails: lia cannot peek inside ForallT *)
+```
+
+**Repaired Code (After - Exposing Inequalities into the Context):**
+
+Extract the inequality into the local hypothesis context first:
+
+```Coq
+(* Extract the concrete inequality using the invariant accessor lemma: *)
+assert (H_ineq : k < x) by (eapply forallt_in; eassumption).
+(* Now lia immediately solves the goal *)
+lia.
+```
+
+---
+
 ## 5. Fallback Procedures
 
 1. **Isolating Non-Linear Factors with `remember`**:

@@ -138,49 +138,148 @@ Qed.
 
 ---
 
-### Case 3: Generalizing Dependencies Before Induction
+### Case 3: Generalizing Dependencies to Avoid Prematurely Specialized IH
 
-**Failing Code (Before):**
+When universal quantifiers following the induction variable are introduced before `induction`, the resulting induction hypothesis becomes specialized to a fixed variable rather than remaining quantified over all possibilities.
+
+**Failing Code (Before - Weak IH):**
 
 ```Coq
-Lemma plus_assoc : forall n m p : nat, n + (m + p) = (n + m) + p.
+Theorem double_injective : forall n m : nat, double n = double m -> n = m.
 Proof.
-  intros n m p.
+  intros n m H.
   induction n as [| n' IHn'].
-  - reflexivity.
-  - simpl.
-    (* If 'm' or 'p' had needed to vary, IHn' would be fixed to this particular m, p *)
-    rewrite IHn'. reflexivity.
+  - (* Base case: n = 0 *)
+    destruct m; auto.
+  - (* Step case: n = S n' *)
+    destruct m as [| m'].
+    + discriminate.
+    + apply f_equal.
+      (* Failure: IHn' has type 'double n' = double m -> n' = m'
+         where 'm' is fixed from the outer context, but we need it for 'm''! *)
+      (* apply IHn' fails with unification error *)
+Abort.
+```
+
+**Repaired Code (After - Generalize Before Induction):**
+
+```Coq
+Theorem double_injective : forall n m : nat, double n = double m -> n = m.
+Proof.
+  intros n.
+  induction n as [| n' IHn'].
+  - intros m H. destruct m; auto.
+  - intros m H. destruct m as [| m'].
+    + discriminate.
+    + apply f_equal.
+      apply IHn'. (* IHn' retains 'forall m, double n' = double m -> n' = m' *)
+      injection H as Hprev. exact Hprev.
 Qed.
 ```
 
-When $m$ or $p$ must vary across inductive steps (e.g., list reversal or accumulator-based operations):
-
-**Repaired Code (After):**
+Or via explicit `generalize dependent`:
 
 ```Coq
-Lemma rev_acc_correct : forall (A : Type) (l acc : list A),
-  (* Inducting on l requires acc to be quantified for all acc *)
-  True.
+Theorem double_injective : forall n m : nat, double n = double m -> n = m.
 Proof.
-  (* General pattern: *)
-  intros A l.
-  induction l as [| x l' IHl']; intros acc.
-  (* Now IHl' has type: forall acc, ... *)
-Admitted.
-```
-
-Use `generalize dependent <var>` explicitly when variables are already in the context:
-
-```Coq
-intros n m H.
-generalize dependent m.
-induction n as [| n' IHn']; intros m H.
+  intros n m H.
+  generalize dependent m.
+  induction n as [| n' IHn']; intros m H.
+  - destruct m; auto.
+  - destruct m as [| m'].
+    + discriminate.
+    + apply f_equal. apply IHn'. injection H as Hprev. exact Hprev.
+Qed.
 ```
 
 ---
 
-### Case 4: Mutual Inductive Relations (`Scheme ... Minimality`)
+### Case 4: Context Generalization in Substitution Lemmas
+
+In proofs of semantic substitution lemmas (e.g., in typed lambda calculi), bound variable substitution extends or shadows the typing environment. Inducting on typing derivations with a fixed context `Gamma` breaks the abstraction cases.
+
+**Failing Code (Before):**
+
+```Coq
+(* Given typing judgment: has_type Gamma t T *)
+Lemma substitution_preserves_typing : forall Gamma x U t v T,
+  has_type (update Gamma x U) t T ->
+  has_type empty v U ->
+  has_type Gamma (subst x v t) T.
+Proof.
+  intros Gamma x U t v T Ht Hv.
+  (* Inducting on Ht while Gamma and x are fixed in context *)
+  induction Ht.
+  (* Abstraction case: bound variable y extends Gamma, but IH is fixed to Gamma *)
+Abort.
+```
+
+**Repaired Code (After):**
+
+```Coq
+Lemma substitution_preserves_typing : forall Gamma x U t v T,
+  has_type (update Gamma x U) t T ->
+  has_type empty v U ->
+  has_type Gamma (subst x v t) T.
+Proof.
+  intros Gamma x U t v T Ht.
+  (* Generalize every parameter subject to extension or renaming *)
+  generalize dependent Gamma.
+  generalize dependent x.
+  generalize dependent U.
+  induction t; intros U x Gamma Ht Hv;
+    inversion Ht; subst; clear Ht; simpl.
+  (* Induction hypotheses now quantify over forall Gamma x U, allowing context permutations *)
+Admitted.
+```
+
+---
+
+### Case 5: Choosing the Primary Induction Subject in Subject Reduction
+
+In subject reduction / preservation theorems relating typing `has_type empty t T` and operational step `step t t'`, inducting directly on the step relation `step t t'` destroys the typing derivation structure of `t`.
+
+**Failing Code (Before):**
+
+```Coq
+Theorem preservation : forall t t' T,
+  has_type empty t T ->
+  step t t' ->
+  has_type empty t' T.
+Proof.
+  intros t t' T HT Hstep.
+  induction Hstep.
+  (* Failure: t's composite shape is dissolved; HT cannot be matched *)
+Abort.
+```
+
+**Repaired Code (After):**
+
+Induct primarily on the typing derivation `HT` while generalizing `t'`, or remember composite indices:
+
+```Coq
+Theorem preservation : forall t t' T,
+  has_type empty t T ->
+  step t t' ->
+  has_type empty t' T.
+Proof.
+  remember empty as Gamma.
+  intros t t' T HT.
+  generalize dependent t'.
+  induction HT; intros t' HeqGamma Hstep; subst.
+  - (* Var: cannot step *) inversion Hstep.
+  - (* Abs: values cannot step *) inversion Hstep.
+  - (* App: invert Hstep and apply substitution lemma *)
+    inversion Hstep; subst; clear Hstep.
+    + (* Beta reduction *) eauto using substitution_preserves_typing.
+    + (* App1 Congruence *) eauto.
+    + (* App2 Congruence *) eauto.
+Admitted.
+```
+
+---
+
+### Case 6: Mutual Inductive Relations (`Scheme ... Minimality`)
 
 For mutually inductive types/predicates, default `induction` produces incomplete induction hypotheses. Generate and apply mutual induction schemes:
 
