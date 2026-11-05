@@ -38,40 +38,40 @@ graph TD
 
 ---
 
-## 2. Bounded Search: `eauto n` and Metavariable Leak Prevention
+## 2. Inner Mechanics of `auto` and `eauto`
 
-### The Danger of Unbounded `eauto`
+### A. Official Search Depth Constants
 
-Running bare `eauto.` allows depth-first backtracking search that can:
+In Rocq's core engine, the default search depth limits are hardcoded:
 
-1. Loop indefinitely on recursive constructors.
-2. Instantiate existential metavariables (`?X`) with incorrect temporary terms, rendering sibling subgoals permanently unprovable.
+- `default_search_depth = 5` (for `auto`)
+- `default_eauto_depth = 5` (for `eauto`)
 
-### The Explicit Depth Mandate
+When invoked without an integer argument (`auto.` or `eauto.`), the search space is bounded by depth 5.
 
-Always specify the search depth explicitly:
+### B. Hint Priority & Cost Queueing
 
-```coq
-(* GOOD: Depth explicitly bounded *)
-eapply step_beta; eauto 2.
-eapply T_App; eauto 3.
+Registered hints are evaluated with an associated non-negative integer cost:
 
-(* MAXIMUM PERMISSIBLE DEPTH *)
-eauto 5.
+- `Hint Resolve`: Default cost is `1`.
+- `Hint Extern`: Default cost is `10` (unless explicitly overridden, e.g., `Hint Extern 4 (...) => ...`).
 
-(* STRICTLY FORBIDDEN *)
-eauto.         (* No depth limit! *)
-firstorder.    (* Non-deterministic predicate search! *)
-```
+Within each search depth level, candidate hints are queued and tried in ascending order of cost (lowest cost first). Ties are broken deterministically by database registration order.
 
-### Eliminating Remaining Evars
+### C. The Depth-6 Exponential Cliff in `eauto`
 
-If an `eapply` or `eauto` creates existential metavariables (visible in the goal as `?X`), resolve them immediately using `instantiate` or explicit binding:
+The `eauto` engine executes depth-bounded backtracking search. Crucially:
 
-```coq
-(* Explicit witness instantiation *)
-eapply lemma_with_domain with (T := nat); eauto 2.
-```
+- **No Node-Count Limit**: There is no hard limit on the total number of explored proof tree nodes or execution time.
+- **The Exponential Cliff**: At depth $d$, the potential search tree size scales as $\mathcal{O}(b^d)$, where $b$ is the branching factor of applicable hints. While $d \le 5$ explores tractable subtrees, setting $d \ge 6$ triggers an exponential explosion, frequently resulting in agent timeouts and thread freezing.
+- **Rule**: Never invoke `eauto` with a depth parameter greater than 5 (`eauto 5`). If depth 5 fails, extract intermediate steps via `assert` or apply key lemmas explicitly (`eapply ...`).
+
+### D. Metavariable (Evar) Preservation and Pruning
+
+When `eauto` appears to close a goal, the engine invokes `Evd.has_undefined` to check whether any newly created existential metavariables (`?X`) remain uninstantiated:
+
+- If uninstantiated evars remain, the engine treats that branch as a failure (`tclFAIL`), immediately triggering backtracking.
+- If no alternative branch discharges all evars, `eauto` aborts without committing partial changes.
 
 ---
 

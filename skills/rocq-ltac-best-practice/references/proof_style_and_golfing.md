@@ -71,16 +71,92 @@ Qed.
 
 ---
 
-## 3. Proof Golfing: Compacting Redundant Proof Steps
+## 3. High-Reliability Tactic Idioms
 
-**Proof golfing** eliminates redundant boilerplate without sacrificing clarity or kernel soundness.
+The core Rocq test-suite demonstrates several robust patterns that avoid fragile proof scripts:
+
+### A. Immediate Goal Closure with `now`
+
+`now <tac>` is a standard shorthand for `solve [ tac; easy ]`:
+
+- It requires that `<tac>` completely discharges the goal.
+- If `<tac>` leaves intermediate subgoals, `now` immediately fails at that point, preventing unproven goals from leaking downstream.
+
+```coq
+Lemma now_example : forall n, n + 0 = n.
+Proof.
+  intro n.
+  now rewrite Nat.add_0_r.
+Qed.
+```
+
+### B. Safe Subgoal Dispatch with `all: try solve [ ... ]`
+
+When applying a tactic across multiple generated subgoals:
+
+- Bare `; try <tac>` partially reduces subgoals, potentially leaving them in an awkward intermediate state (Goal Pollution).
+- `all: try solve [ trivial | lia | reflexivity ]` attempts to completely solve each branch. Branches that cannot be fully closed are left **completely untouched**, preserving clean goals for specialized tactics.
+
+```coq
+Theorem solve_all_example : forall (b : bool), ...
+Proof.
+  destruct b;
+  all: try solve [ reflexivity | lia ].
+  - (* Handle remaining non-trivial branch cleanly *)
+    admit.
+Admitted.
+```
+
+### C. Guarding Loops with `progress`
+
+Unbounded repetition via `repeat <tac>` can enter infinite loops if `<tac>` matches symmetrically (e.g., `repeat rewrite Nat.add_comm` swaps $a + b$ back and forth indefinitely).
+
+- Always guard iterative constructors or rewrites with `progress`:
+  ```coq
+  repeat progress econstructor.
+  ```
+- If `<tac>` executes without transforming the goal term or context, `progress` throws an exception that safely terminates the `repeat` loop.
+
+---
+
+## 4. Regression Hazards & Anti-Patterns
+
+### ❌ Anti-Pattern 1: Context-Accumulating `repeat match`
+
+```coq
+(* DANGEROUS: Loops forever and exhausts memory *)
+Ltac bad_match_loop :=
+  repeat match goal with
+  | [ H : ?P -> ?Q, H' : ?P |- _ ] =>
+      pose proof (H H')
+  end.
+```
+
+- **Hazard**: Each iteration adds a new hypothesis without removing or clearing the original `H`. The match continually triggers on the same premises until an Out of Memory (OOM) crash occurs.
+- **Remedy**: Always consume or clear the matched hypothesis:
+  ```coq
+  Ltac good_match_step :=
+    match goal with
+    | [ H : ?P -> ?Q, H' : ?P |- _ ] =>
+        let H'' := fresh "H" in
+        pose proof (H H') as H''; clear H
+    end.
+  ```
+
+### ❌ Anti-Pattern 2: Unconstrained `simpl in *`
+
+Running `simpl in *` across a context containing large dependent records, typeclass dictionaries, or abstract functions traverses every hypothesis, triggering exponential unification slowdowns and freezing compilation.
+
+- **Remedy**: Target specific hypotheses with `cbn [f] in H` or `unfold def in H`.
+
+---
+
+## 5. Proof Golfing: Compacting Redundant Steps
 
 ### Technique A: Semicolon `;` Tactic Chaining
 
-When a tactic generates multiple subgoals that can all be resolved by the same trailing tactic, chain them using `;`:
-
 ```coq
-(* VERBOSE: 4 identical branches *)
+(* VERBOSE: 2 identical branches *)
 Lemma or_comm_verbose : forall (P Q : Prop), P \/ Q -> Q \/ P.
 Proof.
   intros P Q H.
@@ -96,41 +172,10 @@ Proof.
 Qed.
 ```
 
-### Technique B: Semicolon with `try` for Heterogeneous Branches
-
-When most branches can be closed by a simple decision procedure but one or two require custom work:
-
-```coq
-Theorem eval_cases_golfed : forall c st st',
-  ceval c st st' -> ...
-Proof.
-  induction 1; intros; inv H; try solve [ reflexivity | lia ].
-  - (* Custom treatment for remaining non-trivial branch *)
-    eapply ceval_seq_intermediate; eauto.
-Qed.
-```
-
-### Technique C: Combining Destruction into `intros`
+### Technique B: Combining Destruction into `intros`
 
 Pattern-match structured hypotheses directly inside `intros`:
 
 - Conjunction: `intros [H1 H2].` instead of `intros H. destruct H as [H1 H2].`
 - Disjunction: `intros [H1 | H2].` instead of `intros H. destruct H as [H1 | H2].`
 - Existential: `intros [x Hx].` instead of `intros H. destruct H as [x Hx].`
-
----
-
-## 4. Performance Tuning & Profiling
-
-If compiling a proof script is sluggish:
-
-1. **Profile Tactic Execution Time**:
-   ```coq
-   Set Ltac Profiling.
-   (* Run proof *)
-   Show Ltac Profile.
-   ```
-2. **Replace Slow `auto` with Explicit Steps**: If `auto` spends seconds backtracking, replace it with the exact `apply <lemma>; assumption` sequence discovered.
-3. **Limit Decision Procedure Scopes**:
-   - For `lia`, clear irrelevant hypotheses beforehand: `clear H1 H2. lia.`
-   - For `congruence`, avoid unfolding definitions: `congruence` operates fastest on raw uninterpreted symbols.

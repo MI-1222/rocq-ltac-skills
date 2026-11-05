@@ -1,6 +1,6 @@
 ---
 name: rocq-ltac-best-practice
-description: Comprehensive best practices, proof engineering idioms, contract fences, and CS verification patterns for autonomous theorem proving in Rocq (formerly Coq) using Pure Vanilla Ltac. Use whenever designing, structuring, refactoring, or reviewing Rocq proofs, enforcing declaration header fences (signature immutability, preventing Goal Drift), enforcing docstring rules (Rules A/B/C for specification preservation and auxiliary lemmas), managing top-down (admit-driven) proof decomposition, eliminating monolithic proof blocks (>30 lines), standardizing destruction with CompCert `inv` idiom (`inversion H; subst; clear H.`), preserving inductive indices via Software Foundations `remember ... as ... eqn:...` and `revert` patterns, establishing programming language semantics theorems (Progress, Preservation, Substitution Lemma, canonical forms), verifying state transition systems (RTC induction, invariant preservation, forward simulation diagrams), ensuring function termination via well-founded measures (`Program Fixpoint {measure}`), managing reduction and transparency (`cbn [f]` / `unfold` vs `simpl`, strict `Qed` vs `Defined` boundaries, preventing proof term explosion), enforcing deterministic tactic hierarchies (Tiers 1-6, bounded `eauto n`, blocking unconstrained `eauto` or `firstorder`), enforcing bullet hierarchies (`-`, `+`, `*`) and `{ ... }` scoping, or auditing proof contracts with `scripts/lint_proof_contract.py`.
+description: Best practices, proof engineering idioms, contract fences, and CS verification patterns for formal proving in Rocq (formerly Coq) using Pure Vanilla Ltac. Use when designing, structuring, or reviewing Rocq proofs, enforcing declaration header fences (signature immutability, preventing Goal Drift), managing top-down lemma decomposition, applying destruction idioms (inversion H; subst; clear H.), preserving inductive indices with remember, establishing CS semantics patterns, controlling reduction, enforcing tactic hierarchies (bounded eauto), or running scripts/lint_proof_contract.py.
 compatibility: Target Rocq 9.0+ (Backward compatible with Coq 8.20). Requires Python 3.10+ for scripts/lint_proof_contract.py.
 metadata:
   target-prover: "Rocq 9.0+ / Coq 8.20"
@@ -36,15 +36,15 @@ graph TD
   Root["Rocq Proof Engineering Pillars"]
   Root --> P1["1. Header Fence<br/>Signature immutability & Docstring freezing"]
   Root --> P2["2. Top-Down Proving<br/>Admit-driven decomposition & 30-line limit"]
-  Root --> P3["3. Context Cleanliness<br/>CompCert inv idiom (inversion; subst; clear)"]
+  Root --> P3["3. Context Cleanliness<br/>Atomic inv idiom (inversion; subst; clear)"]
   Root --> P4["4. Induction Safety<br/>remember idiom & revert for index protection"]
-  Root --> P5["5. Deterministic Automation<br/>Tier 1-6 priority & bounded eauto n"]
+  Root --> P5["5. Deterministic Automation<br/>Tier 1-6 priority & bounded eauto n (n <= 5)"]
   Root --> P6["6. Reduction & Transparency<br/>cbn/unfold control & strict Qed encapsulation"]
 ```
 
-1. **Contract Invariance (Header Fence)**: Theorem declarations, type signatures, and specification comments (`(** [SPEC] ... *)`) are **immutable contracts**. Never alter a theorem statement, weaken conclusions, add artificial premises (such as `False ->`), or introduce unapproved axioms.
+1. **Contract Invariance (Header Fence)**: Theorem declarations across all 8 standard keywords (`Theorem`, `Lemma`, `Fact`, `Remark`, `Corollary`, `Proposition`, `Property`, `Example`), type signatures, bracketed attributes (`#[...]`), and specification comments (`(** [SPEC] ... *)`) are **immutable contracts**. Never alter a theorem statement, weaken conclusions, add artificial premises (such as `False ->`), or introduce unapproved axioms.
 2. **Top-Down (Admit-Driven) Proving**: Decompose complex proofs into modular standalone lemmas. Keep individual proof blocks under 30 lines (maximum 50 lines). Use temporary `admit.` during high-level architectural design, and eliminate all admits before submission.
-3. **Context Cleanliness (`inv` Idiom)**: Never leave bare `inversion H.` unmanaged. Always execute `inversion H; subst; clear H.` (the CompCert `inv H` macro) to eliminate redundant equation hypotheses, substitute variables, and keep the local context minimal.
+3. **Context Cleanliness (`inv` Idiom)**: Never leave bare `inversion H.` unmanaged. Always execute `inversion H; subst; clear H.` (the `inv H` macro) to eliminate redundant equation hypotheses, substitute variables, and keep the local context minimal.
 4. **Induction Safety (`remember` Idiom)**: When inducting over relations with compound indices (e.g., `step (EApp e1 e2) e'`), direct `induction` loses structural index constraints. Always apply `remember <term> as x eqn:Heqx` and `revert` dependent hypotheses before `induction`.
 5. **Deterministic Automation Hierarchy**: Prioritize fast decision procedures (`reflexivity`, `discriminate`, `congruence`, `lia`, `tauto`) over speculative search. Bound backtracking depth explicitly (`eauto 3`, max `eauto 5`). Never use unconstrained `eauto` or non-deterministic `firstorder`.
 6. **Controlled Reduction & Transparency**: Avoid unconstrained `compute` or bare `simpl` that explode symbolic terms into massive lambda expressions. Use `cbn [f g]` or explicit `unfold`. Seal all lemmas with `Qed` (reserving `Defined` strictly for computational definitions).
@@ -66,7 +66,7 @@ Before starting, while structuring, and before completing any proof task, verify
 
 - [ ] **Destruction Managed**: Is every inversion cleaned up with `inv H` (`inversion H; subst; clear H.`)?
 - [ ] **Subgoals Structured**: Are all branching subgoals strictly focused with bullets (`-`, `+`, `*`) or scoped within `{ ... }`?
-- [ ] **Safe Reduction Used**: Are definitions unfolded selectively via `unfold` or `cbn [f]` instead of blind `compute`? -> Consult [`references/reduction_transparency.md`](references/reduction_transparency.md).
+- [ ] **Safe Reduction Used**: Are definitions unfolded selectively via `unfold` or `cbn [f]` instead of blind `compute` or speculative `simpl`? -> Consult [`references/reduction_transparency.md`](references/reduction_transparency.md).
 - [ ] **Automation Bounded**: Are `eauto` calls depth-bounded ($n \le 5$)? Is `lia` used for integer/natural arithmetic (with `zify` or case splits for subtraction)? -> Consult [`references/tactic_hierarchy.md`](references/tactic_hierarchy.md).
 - [ ] **Encapsulation**: Are completed lemmas closed with `Qed` rather than `Defined`?
 
@@ -86,12 +86,12 @@ Consult the specialized reference guides below for in-depth principles, concrete
 | Guide                                                                 | Core Topics & Techniques                                                                       | When to Read                                                                    |
 | :-------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------ |
 | [`proof_architecture.md`](references/proof_architecture.md)           | Top-down proof structuring, 30-line limit, `admit` lifecycle, `assert` vs `enough`.            | When designing large proofs, decomposing lemmas, or structuring proofs.         |
-| [`header_fence.md`](references/header_fence.md)                       | Contract immutability, preventing Goal Drift, Docstring Rules A/B/C, `lint_proof_contract.py`. | When receiving tasks, writing auxiliary lemmas, or preparing final submission.  |
+| [`header_fence.md`](references/header_fence.md)                       | Contract immutability, 8 declaration keywords, attributes BNF, Docstring Rules A/B/C.          | When receiving tasks, writing auxiliary lemmas, or preparing final submission.  |
 | [`cs_verification_idioms.md`](references/cs_verification_idioms.md)   | Progress, Preservation, Substitution lemmas, Invariant RTC induction, Simulation, Termination. | When proving type safety, operational semantics, interpreters, or transitions.  |
 | [`induction_patterns.md`](references/induction_patterns.md)           | `remember` idiom, `revert` / `generalize dependent`, mutual induction, well-founded recursion. | When inducting on indexed inductive types or complex step relations.            |
-| [`tactic_hierarchy.md`](references/tactic_hierarchy.md)               | 6-tier automation hierarchy, `lia` subtraction caveats, `HintDb` scoping (`#[local]`).         | When selecting tactics, optimizing proof steps, or bounding automated searches. |
-| [`reduction_transparency.md`](references/reduction_transparency.md)   | `cbn [f]` vs `simpl` vs `unfold`, `compute` hazards, `Qed` vs `Defined`, term size control.    | When goals explode into huge expressions or typechecking slows down.            |
-| [`proof_style_and_golfing.md`](references/proof_style_and_golfing.md) | Bullet hierarchies (`-`, `+`, `*`), `{ ... }` blocks, semicolon `;` chaining, golfing rules.   | When polishing proof readability, organizing subgoals, or reducing line count.  |
+| [`tactic_hierarchy.md`](references/tactic_hierarchy.md)               | 6-tier automation hierarchy, `default_search_depth = 5`, `lia` subtraction caveats, `HintDb`.  | When selecting tactics, optimizing proof steps, or bounding automated searches. |
+| [`reduction_transparency.md`](references/reduction_transparency.md)   | `cbn [f]` TransparentState, `simpl` progress heuristics, `compute` OOM, `Qed` vs `Defined`.    | When goals explode into huge expressions or typechecking slows down.            |
+| [`proof_style_and_golfing.md`](references/proof_style_and_golfing.md) | Bullet hierarchies, `now`, `all: try solve`, `progress`, infinite loop hazards in `repeat`.    | When polishing proof readability, organizing subgoals, or avoiding regressions. |
 
 ---
 

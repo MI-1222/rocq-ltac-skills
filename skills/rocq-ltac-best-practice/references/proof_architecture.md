@@ -128,38 +128,6 @@ When proof logic is small ($\le 10$ lines) and tightly coupled to the local cont
 | `enough (H : P)`        | **Backward**       | Goal becomes `⊢ P -> Target`, followed by subgoal `⊢ P`             | Reframing goal in terms of a sufficient prerequisite.          |
 | `pose proof term as H`  | **Instantiate**    | Adds existing lemma instantiated with local variables to hypotheses | Specializing a generic library theorem for local use.          |
 
-### Idiomatic Examples
-
-```coq
-(* Example 1: assert by for immediate arithmetic deductions *)
-Lemma local_assert_example : forall n m, n <= m -> n + 1 <= m + 1.
-Proof.
-  intros n m H.
-  assert (Hpos: 1 <= 1) by lia.
-  lia.
-Qed.
-
-(* Example 2: enough to invert the burden of proof *)
-Lemma local_enough_example : forall (P Q R : Prop),
-  (P -> Q) -> (Q -> R) -> P -> R.
-Proof.
-  intros P Q R Hpq Hqr Hp.
-  enough (Hq: Q).
-  - apply Hqr. assumption.
-  - apply Hpq. assumption.
-Qed.
-
-(* Example 3: pose proof to specialize an existing lemma *)
-Lemma local_pose_proof_example : forall n, Nat.Even (2 * n).
-Proof.
-  intros n.
-  pose proof (Nat.Even_or_Odd (2 * n)) as [Heven | Hodd].
-  - assumption.
-  - (* Disprove oddness *)
-    exfalso. (* ... *)
-Admitted.
-```
-
 ---
 
 ## 4. Temporary `admit` / `Admitted` Lifecycle Management
@@ -184,55 +152,37 @@ To prevent reward hacking and unproven code leaks:
 
 ---
 
-## 5. CompCert-Style Destruction Hygiene (`inv H`)
+## 5. Atomic Destruction Hygiene (`inv H`) & Inversion Mechanics
 
-Bare `inversion H.` generates auxiliary equations, leaves dirty redundant hypotheses, and clutters the local context with unusable metavariables.
+### A. The Non-Deterministic Numbering Trap in `inversion`
 
-### The Universal Inversion Macro
+Bare `inversion H.` invokes internal fresh identifier generators (`fresh_id_in_env`), producing default names `H0`, `H1`, `H2`, ...:
 
-Always define and use the CompCert destruction idiom:
+- Because these index numbers depend on whatever identifiers currently reside in the local environment, subsequent tactic lines that reference `H0` or `H1` by name are brittle and fail when earlier proof steps change.
+- Bare `inversion` leaves both the redundant generated equality hypotheses and the consumed original hypothesis `H` in the context, rapidly saturating memory.
+
+### B. The Atomic Destruction Macro
+
+Always define and use the atomic destruction idiom:
 
 ```coq
 Ltac inv H := inversion H; subst; clear H.
 ```
 
-### Contrast: Before vs. After `inv H`
+Executing `inv H` guarantees:
 
-#### ❌ Cluttered Context with Bare `inversion`
+1. All newly exposed equalities `x = e` are substituted throughout the goal and hypotheses via `subst`.
+2. The obsolete hypothesis `H` is cleared immediately, keeping the local context minimal.
 
-```coq
-Lemma inv_bad : forall t1 t2 T,
-  has_type empty (TApp t1 t2) T -> False.
-Proof.
-  intros t1 t2 T H.
-  inversion H.
-  (* Context now polluted with:
-     Gamma0 : context
-     t0, t3 : tm
-     T1 : ty
-     H0 : Gamma0 = empty
-     H1 : t0 = t1
-     H2 : t3 = t2
-     H3 : has_type Gamma0 t0 (TArrow T1 T)
-     H4 : has_type Gamma0 t3 T1
-     H : has_type empty (TApp t1 t2) T
-  *)
-Abort.
-```
+### C. Strict Failure Modes of `subst` & Alternative Idioms
 
-#### ✅ Pristine Context with `inv H`
+When `subst` fails during `inv H`, it is almost always caused by one of three internal constraints:
 
-```coq
-Lemma inv_good : forall t1 t2 T,
-  has_type empty (TApp t1 t2) T -> False.
-Proof.
-  intros t1 t2 T H.
-  inv H.
-  (* All equation hypotheses substituted, H cleared.
-     Only genuine premises remain:
-     T1 : ty
-     H2 : has_type empty t1 (TArrow T1 T)
-     H4 : has_type empty t2 T1
-  *)
-Abort.
-```
+1. **Occurs-Check Failure (`occur_var`)**: Variable `x` appears freely inside its substituted value `e` (e.g., $x = f(x)$). Substitution would trigger infinite expansion, throwing `Cannot remove x because it occurs in its value`.
+2. **Dependency Topological Cycles**: Variable `x` is depended on by another hypothesis $H_i$, which in turn is depended on by the equation defining `x`.
+3. **Dependent Inductive Indices**: The equality relates non-variable indices of dependent types, requiring heterogeneous equality (John Major's Equality) rather than standard Leibniz equality.
+
+#### Prescriptions for Inversion Failures
+
+- **For Dependent Inversions**: Switch to `dependent destruction H` (from `From Stdlib Require Import Program.Equality.`) or use the `remember ... as ... eqn:... in H` idiom before `destruct H`.
+- **For Simple Injective Constructors**: Prefer `injection H as ->` or `injection H; intros; subst` over full `inversion` to avoid generating intermediate equations altogether.

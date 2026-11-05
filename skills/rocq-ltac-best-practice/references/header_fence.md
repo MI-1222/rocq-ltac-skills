@@ -17,11 +17,11 @@ These behaviors invalidate the formal verification process. Autonomous agents mu
 
 ---
 
-## 2. The Header Fence Rule
+## 2. The Header Fence Rule & Vernacular Syntax
 
 ### Definition of the Header Fence
 
-The **Header Fence** is the exact byte range starting from the declaration vernacular keyword (`Theorem`, `Lemma`, `Corollary`, `Proposition`, `Fact`, `Remark`) up to and including the concluding period (`.`) before `Proof.`.
+The **Header Fence** is the exact byte range starting from the declaration vernacular keyword up to and including the concluding period (`.`) before `Proof.`.
 
 ```coq
 (********************** HEADER FENCE (IMMUTABLE) **********************)
@@ -34,6 +34,50 @@ Proof.
   (* ONLY lines after Proof. and before Qed. may be edited *)
 Qed.
 ```
+
+### Supported Declaration Vernacular Keywords
+
+The Rocq kernel and parser define exactly eight primary interactive theorem-starting keywords (`theorem_kind`):
+
+| Keyword       | Typical Semantic Role                                    |
+| :------------ | :------------------------------------------------------- |
+| `Theorem`     | Primary high-level mathematical or architectural result. |
+| `Lemma`       | Modular auxiliary fact or sub-theorem.                   |
+| `Fact`        | Short, localized mathematical property.                  |
+| `Remark`      | Informative observation or corollary.                    |
+| `Corollary`   | Direct deduction following a main theorem.               |
+| `Proposition` | Intermediate proposition in domain theories.             |
+| `Property`    | State invariant or relational property.                  |
+| `Example`     | Concrete assertion, demonstration, or smoke test.        |
+
+_(Note: Bare `Goal` initiates an anonymous proof; production code and formal specifications must use named declarations)._
+
+### Modern Bracketed Attributes Syntax (`#[...]`)
+
+In modern Rocq, modifiers are unified into bracketed attributes preceding declaration keywords:
+
+```bnf
+attributes      ::= ( "#[" attribute_list "]" )*
+attribute_list  ::= attribute ("," attribute)*
+attribute       ::= [qualid ":"] ident ["(" payload ")"] | ident "=" string | ident "=" int
+payload         ::= qualid | string | int | ident "=" string
+```
+
+- **Scope Control**: `#[local]`, `#[global]`, `#[export]`
+- **Universe Polymorphism**: `#[universes(polymorphic)]`, `#[universes(cumulative)]`
+- **Program & Extraction**: `#[program]`, `#[canonical(...)]`, `#[deprecated(...)]`
+
+The Header Fence protects any leading attribute brackets: `#[local] Lemma foo : P.` must remain `#[local] Lemma foo : P.`.
+
+### Trailing Qualifiers before the Terminator (`.`)
+
+Theorem signatures may include trailing modifiers immediately before the terminating period:
+
+1. **Mutual Theorems**: `Theorem foo : P with bar : Q.` (simultaneous mutual proofs)
+2. **Local Notations**: `Theorem foo : P where "a +++ b" := (app a b).`
+3. **Section Proof Using Filters**: `Theorem foo : P using H1 H2.`
+
+The Header Fence covers all such clauses up to the final period.
 
 ### Prohibitions (Zero Tolerance)
 
@@ -70,7 +114,7 @@ Theorem type_soundness : ...
 
 - Any comment matching `(** [SPEC] ... *)` present in the original source file is **completely frozen**.
 - Agents are strictly forbidden from editing, deleting, moving, or reformatting `(** [SPEC] ... *)` blocks.
-- Deleting or altering spec docstrings triggers immediate rejection by `lint_proof_contract.py`.
+- Deleting or altering spec docstrings triggers immediate rejection by [`scripts/lint_proof_contract.py`](../scripts/lint_proof_contract.py:1).
 
 ### Rule B: Review-Mode Verification
 
@@ -95,7 +139,7 @@ Lemma ceval_seq_determ : ...
 
 ## 4. Automated Verification with `lint_proof_contract.py`
 
-The skill bundles `scripts/lint_proof_contract.py` to mechanically verify compliance with Header Fence and Docstring rules.
+The skill bundles [`scripts/lint_proof_contract.py`](../scripts/lint_proof_contract.py:1) to mechanically verify compliance with Header Fence and Docstring rules.
 
 ### CLI Protocol
 
@@ -114,7 +158,7 @@ python3 skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py \
 
 ### JSON Output for Agent Pipelines
 
-When called with `--json`, `lint_proof_contract.py` emits structured machine-readable results:
+When called with `--json`, [`scripts/lint_proof_contract.py`](../scripts/lint_proof_contract.py:1) emits structured machine-readable results:
 
 ```json
 {

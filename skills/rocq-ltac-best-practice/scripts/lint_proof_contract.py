@@ -12,8 +12,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Matches all 8 standard theorem-introducing vernacular keywords with optional attributes
 DECLARATION_START_RE = re.compile(
-    r"^\s*(?:#\[[^\]]*\]\s*)*(?:Theorem|Lemma|Corollary|Proposition|Fact|Remark)\s+([A-Za-z0-9_']+)",
+    r"^\s*(?:#\[[^\]]*\]\s*)*(?:Theorem|Lemma|Fact|Remark|Corollary|Proposition|Property|Example)\s+([A-Za-z0-9_']+)",
     re.MULTILINE,
 )
 DOCSTRING_SPEC_RE = re.compile(r"\(\*\*\s*\[SPEC\].*?\*\)", re.DOTALL)
