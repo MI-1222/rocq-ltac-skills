@@ -3,7 +3,7 @@
 
 Provides sentence-level lexing, stateless subshell execution (rocq top / coqtop),
 goal and hypothesis parsing with multiline normalization, inline Vernacular query
-execution with native output limits, and soundness cheat detection.
+execution, property testing (QuickChick) output analysis, and soundness cheat detection.
 """
 
 from __future__ import annotations
@@ -137,7 +137,10 @@ class RocqLexer:
                         sent_text = code[current_start : i + 1].strip()
                         if sent_text:
                             has_admit = bool(
-                                re.search(r"\b(admit|Admitted|give_up)\b", sent_text)
+                                re.search(
+                                    r"\b(admit|Admitted|give_up|FILL_IN_HERE)\b",
+                                    sent_text,
+                                )
                             )
                             sentences.append(
                                 Sentence(
@@ -178,7 +181,9 @@ class RocqLexer:
 
         remaining_text = code[current_start:].strip()
         if remaining_text:
-            has_admit = bool(re.search(r"\b(admit|Admitted|give_up)\b", remaining_text))
+            has_admit = bool(
+                re.search(r"\b(admit|Admitted|give_up|FILL_IN_HERE)\b", remaining_text)
+            )
             sentences.append(
                 Sentence(
                     text=remaining_text,
@@ -342,6 +347,22 @@ class ProofStateParser:
     RE_SHELVED = re.compile(r"\(shelved:\s*(\d+)\)", re.IGNORECASE)
     RE_GIVEN_UP = re.compile(r"there are some goals you gave up", re.IGNORECASE)
 
+    # QuickChick property test patterns
+    RE_QC_PASSED = re.compile(
+        r"(?:Success:\s*Passed|\+\+\+\s*Passed)\s*(?P<tests>\d+)\s*tests(?:\s*\((?P<discards>\d+)\s*discards\))?",
+        re.MULTILINE | re.IGNORECASE,
+    )
+    RE_QC_FALSIFIABLE = re.compile(
+        r"Falsifiable\s*after\s*(?P<tests>\d+)\s*tests(?:\s*\((?P<discards>\d+)\s*discards\))?!"
+        r"(?:\s*Shrinking\.\.\.\s*\((?P<shrinks>\d+)\s*shrinks\))?"
+        r"(?:\n(?P<counterexample>[\s\S]+?))?(?=\n(?:Gave up|Success|\+\+\+|\Z))",
+        re.MULTILINE | re.IGNORECASE,
+    )
+    RE_QC_GAVE_UP = re.compile(
+        r"Gave up!\s*Passed only\s*(?P<tests>\d+)\s*tests\s*\((?P<discards>\d+)\s*discards\)",
+        re.MULTILINE | re.IGNORECASE,
+    )
+
     # Prompt line matching toplevel or proofmode prompts
     RE_PROMPT = re.compile(
         r"^(?:Rocq|Coq|[A-Za-z_][A-Za-z0-9_']*(?:\s+\(focused\))?)\s*<\s*",
@@ -362,6 +383,7 @@ class ProofStateParser:
             "has_evar_warning": False,
             "shelved_count": 0,
             "has_given_up_warning": False,
+            "quickchick": None,
             "raw_state": "",
         }
 
@@ -375,6 +397,11 @@ class ProofStateParser:
             result["error_message"] = err_match.group(0).strip()
             result["raw_state"] = combined_output
             return result
+
+        # Check QuickChick outputs
+        qc_result = cls.parse_quickchick(stdout_output)
+        if qc_result:
+            result["quickchick"] = qc_result
 
         if (
             "No more goals." in stdout_output
@@ -481,6 +508,45 @@ class ProofStateParser:
 
         result["raw_state"] = combined_output
         return result
+
+    @classmethod
+    def parse_quickchick(cls, output: str) -> dict[str, Any] | None:
+        """Parse property-based testing outputs from QuickChick."""
+        falsifiable_match = cls.RE_QC_FALSIFIABLE.search(output)
+        if falsifiable_match:
+            tests = int(falsifiable_match.group("tests"))
+            discards = int(falsifiable_match.group("discards") or 0)
+            shrinks = int(falsifiable_match.group("shrinks") or 0)
+            counterexample = falsifiable_match.group("counterexample")
+            return {
+                "status": "falsifiable",
+                "tests": tests,
+                "discards": discards,
+                "shrinks": shrinks,
+                "counterexample": counterexample.strip() if counterexample else None,
+            }
+
+        passed_match = cls.RE_QC_PASSED.search(output)
+        if passed_match:
+            tests = int(passed_match.group("tests"))
+            discards = int(passed_match.group("discards") or 0)
+            return {
+                "status": "passed",
+                "tests": tests,
+                "discards": discards,
+            }
+
+        gave_up_match = cls.RE_QC_GAVE_UP.search(output)
+        if gave_up_match:
+            tests = int(gave_up_match.group("tests"))
+            discards = int(gave_up_match.group("discards") or 0)
+            return {
+                "status": "gave_up",
+                "tests": tests,
+                "discards": discards,
+            }
+
+        return None
 
     @classmethod
     def parse_search_results(
@@ -657,8 +723,10 @@ def main() -> None:
         clean_search = args.search.strip()
         if not clean_search.endswith("."):
             clean_search += "."
-        # If user did not prefix with Search / Locate / About / Check, default to Search
-        if not re.match(r"^(Search|Locate|About|Check|Print)\b", clean_search):
+        # If user did not prefix with Search / Locate / About / Check / QuickCheck, default to Search
+        if not re.match(
+            r"^(Search|Locate|About|Check|Print|QuickCheck|Sample)\b", clean_search
+        ):
             clean_search = f"Search {clean_search}"
         command_texts.append(clean_search)
 
@@ -677,7 +745,7 @@ def main() -> None:
         if state_res["is_done"]:
             state_res["is_done"] = False
         state_res["soundness_violation"] = (
-            "Detected 'admit', 'Admitted', or 'give_up' in executed proof prefix. "
+            "Detected 'admit', 'Admitted', 'give_up', or 'FILL_IN_HERE' in executed proof prefix. "
             "Proof cannot be certified complete."
         )
 
@@ -706,6 +774,14 @@ def main() -> None:
                 print("[WARNING] Existential variables / evars detected!")
             if state_res.get("shelved_count", 0) > 0:
                 print(f"[WARNING] Shelved goals detected: {state_res['shelved_count']}")
+            if state_res.get("quickchick"):
+                qc = state_res["quickchick"]
+                if qc["status"] == "passed":
+                    print(f"[QuickChick] Passed {qc['tests']} tests.")
+                elif qc["status"] == "falsifiable":
+                    print(
+                        f"[QuickChick] Falsifiable after {qc['tests']} tests! Counterexample: {qc.get('counterexample')}"
+                    )
             print("--- Hypotheses ---")
             for h in state_res["hypotheses"]:
                 print(f"  {h}")

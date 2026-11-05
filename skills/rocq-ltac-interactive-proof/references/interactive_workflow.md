@@ -16,8 +16,8 @@ graph TD
   D --> E[Backtrack to Line N-1 & Reformulate]
   E --> B
   C -- "Open Subgoals Remaining" --> F[Inspect Focused Goal & Hypotheses]
-  F --> G{Lemma Needed?}
-  G -- "Yes" --> H[Run Vernacular Query: Search / About]
+  F --> G{Lemma or Tactic Needed?}
+  G -- "Yes" --> H[Run Vernacular Query: Search / About / QuickCheck]
   H --> I[Apply Lemma / Tactic]
   G -- "No" --> I
   I --> J[Append Validated Tactic to Source]
@@ -37,7 +37,67 @@ graph TD
 
 ---
 
-## 2. Strict Bullet Disciplines and Nesting
+## 2. Destructive Inversion & Context Pruning
+
+Standard `inversion H` leaves redundant equality hypotheses (such as `H0 : x = y`) and retains the original hypothesis `H`, leading to context explosion and hypothesis name jumping (`H1`, `H2`, `H3`...).
+
+### The Destructive Inversion Idiom (`inv`)
+
+Always follow `inversion` with `subst` and `clear`:
+
+```coq
+inversion H; subst; clear H.
+```
+
+If defined in project preludes:
+
+```coq
+Ltac inv H := inversion H; subst; clear H.
+```
+
+- **Effect**: Eliminates all trivial equalities, substitutes variables throughout hypotheses and target, and removes the consumed hypothesis `H`, minimizing local context clutter.
+
+### Batch Inversion for Disjoint Cases (`solve_by_inversion`)
+
+When analyzing inductive syntax or transition relations where many cases are contradictory (e.g., constructors differ):
+
+```coq
+Ltac solve_by_inversion :=
+  match goal with
+  | H : _ |- _ => solve [ inversion H ]
+  end.
+```
+
+Use `; try solve_by_inversion` to immediately discharge impossible branches after case analysis.
+
+---
+
+## 3. Generalizing Dependencies (`generalize dependent`)
+
+When applying induction to predicates with indexed or compound terms, variables introduced too early become fixed in the local context. This weakens the induction hypothesis (IH), making the theorem unprovable.
+
+### The Generalize Dependent Idiom
+
+Before invoking `induction`, return dependent variables back to universal quantifiers:
+
+```coq
+Theorem trans_step : forall n m, P n m -> Q n m.
+Proof.
+  intros n m H.
+  generalize dependent m.
+  induction n as [| n' IHn'].
+  - (* n = 0: Target is forall m, P 0 m -> Q 0 m *)
+    intros m H. ...
+  - (* n = S n': IHn' has generalized 'forall m', not a fixed m *)
+    intros m H. ...
+Qed.
+```
+
+- **Rule**: If a hypothesis in the target depends on a variable `m`, and you induct on another variable `n`, run `generalize dependent m.` prior to `induction n.` to ensure the IH quantifies over all possible `m`.
+
+---
+
+## 4. Strict Bullet Disciplines and Nesting
 
 Bullets (`-`, `+`, `*`, `--`, `++`, `**`) enforce proof structure by structuring branching proofs (such as cases from `destruct`, `induction`, or `split`).
 
@@ -58,28 +118,19 @@ Bullets (`-`, `+`, `*`, `--`, `++`, `**`) enforce proof structure by structuring
    Wrong bullet +: Current bullet - is not finished.
    ```
 
-### Well-Structured Example
+### Managing Large Branching Factors (8 to 16+ Subgoals)
 
-```coq
-Theorem add_comm : forall n m : nat, n + m = m + n.
-Proof.
-  intros n m.
-  induction n as [| n' IHn'].
-  - (* Base case: n = 0 *)
-    simpl.
-    rewrite <- plus_n_O.
-    reflexivity.
-  - (* Inductive step: n = S n' *)
-    simpl.
-    rewrite IHn'.
-    rewrite Nat.add_succ_r.
-    reflexivity.
-Qed.
-```
+In formal semantics and syntax evaluation (e.g., progress or preservation proofs), case analysis can produce 8 to 16 subgoals:
+
+- Discharge trivial and contradictory branches early across all branches using tactical combinators:
+  ```coq
+  induction H; intros; subst; try solve_by_inversion; try easy.
+  ```
+- Focus remaining non-trivial subgoals one by one using structured bullets (`-`) or `{ ... }`.
 
 ---
 
-## 3. Scoping Focus Braces (`{ ... }`) for Goal Isolation
+## 5. Scoping Focus Braces (`{ ... }`) for Goal Isolation
 
 Curly braces `{ ... }` focus entirely on the first subgoal, hiding all other subgoals and hypotheses from other branches until the enclosed subproof is completed with closing `}`. `{` and `}` are defined as standalone vernacular transitions that do not require period terminators.
 
@@ -104,7 +155,7 @@ Curly braces `{ ... }` focus entirely on the first subgoal, hiding all other sub
 
 ---
 
-## 4. Recovery Protocols from `Wrong bullet` and Subgoal Mismatch
+## 6. Recovery Protocols from `Wrong bullet` and Subgoal Mismatch
 
 When Rocq encounters a bullet error or unexpected subgoals, follow this deterministic recovery protocol.
 
@@ -124,18 +175,19 @@ When Rocq encounters a bullet error or unexpected subgoals, follow this determin
 
 ---
 
-## 5. Proof Termination Sequence (`Qed.` / `Defined.`) & Soundness Verification
+## 7. Proof Termination Sequence (`Qed.` / `Defined.`) & Soundness Verification
 
 A proof is not complete until it has passed the formal termination checkpoint and soundness validation.
 
 ### Finalization Steps
 
 1. **Verify Goal Clearance**: Ensure `rocq_goal.py` reports `is_done: true` and `subgoal_count: 0`.
-2. **Place Delimiter on Standalone Line**:
+2. **Handle Exercise Placeholders**: Replace any template placeholders (such as `FILL_IN_HERE` or temporary `Admitted.`) with verified proof scripts.
+3. **Place Delimiter on Standalone Line**:
    - Use `Qed.` for standard opaque theorems and propositions (`Prop`).
    - Use `Defined.` only for transparent computational definitions (`Type` or `Set`) whose bodies must compute via `simpl` or `vm_compute`.
    - Never write tactics on the same line as `Qed.` (e.g., `reflexivity. Qed.` is forbidden by syntax style).
-3. **Soundness Audit (Verification Gate Tier 3)**:
+4. **Soundness Audit (Verification Gate Tier 3)**:
    Immediately after closing a theorem with `Qed.`, verify that the proof is free of unapproved axioms using `scripts/audit_axioms.py` from `rocq-ltac-cli`:
    ```bash
    python3 skills/rocq-ltac-cli/scripts/audit_axioms.py --module <Logical.Path> --theorem <TheoremName>

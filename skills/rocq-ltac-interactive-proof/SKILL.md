@@ -1,6 +1,6 @@
 ---
 name: rocq-ltac-interactive-proof
-description: Interactively step through Rocq (formerly Coq) formal proofs, inspect open subgoals and hypotheses using the zero-dependency REPL controller (`scripts/rocq_goal.py`), execute high-precision Vernacular queries (`Search`, `Locate`, `About`, `Check`, `Print`), enforce strict bullet and brace structuring (`-`, `+`, `*`, `{ ... }`), diagnose proof state failures (Evars, shelved goals, unification errors), and prevent cheat tactics (`admit`, `Admitted`, `give_up`). Use whenever writing or stepping through proof scripts, checking intermediate goal states at specific line numbers, searching for lemmas by pattern or conclusion filter (`concl:`), finding definitions of notations or identifiers, or resolving `Wrong bullet` and incomplete subproof errors.
+description: Interactively step through Rocq (formerly Coq) formal proofs, inspect open subgoals and hypotheses using the zero-dependency REPL controller (`scripts/rocq_goal.py`), execute high-precision Vernacular queries (`Search`, `Locate`, `About`, `Check`, `Print`), run property-based tests (`QuickCheck`), enforce strict bullet and brace structuring (`-`, `+`, `*`, `{ ... }`), diagnose proof state failures (Evars, shelved goals, unification errors), and prevent cheat tactics (`admit`, `Admitted`, `give_up`, `FILL_IN_HERE`). Use whenever writing or stepping through proof scripts, checking intermediate goal states at specific line numbers, searching for lemmas by pattern or conclusion filter (`concl:`), finding definitions of notations or identifiers, running QuickChick property tests, or resolving `Wrong bullet` and incomplete subproof errors.
 compatibility: Target Rocq 9.0+ (Backward compatible with Coq 8.20). Requires Python 3.10+ for scripts/rocq_goal.py.
 metadata:
   target-prover: "Rocq 9.0+ / Coq 8.20"
@@ -31,14 +31,15 @@ Autonomous theorem proving in Rocq requires continuous feedback from the proof a
 
 ## 1. Quick Reference: Core Proving Commands
 
-| Goal / Action                  | Command / Usage                                                                         | Description                                                                         |
-| :----------------------------- | :-------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------- |
-| **Inspect Goal at Line $N$**   | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --json`                        | Evaluates file up to line $N$ and returns focused hypotheses and target in JSON.    |
-| **Inline Code Goal Check**     | `python3 scripts/rocq_goal.py --code "Theorem t : True. Proof." --json`                 | Evaluates raw code string without requiring a disk file.                            |
-| **Targeted Lemma Search**      | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --search "concl:(_ <= _)"`     | Runs `Search concl:(_ <= _).` at the active proof state and returns top results.    |
-| **Locate Notation / Symbol**   | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --search "Locate \"++\""`      | Resolves user notation to canonical Gallina constant (e.g., `app`).                 |
-| **Audit Implicit Arguments**   | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --search "About Nat.le_trans"` | Prints lemma signature, implicit brackets (`[ ]` vs `{ }`), and explicit arguments. |
-| **Verify Term Well-Typedness** | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --search "Check (x + y)"`      | Validates expression type in local context before applying a rewrite or assertion.  |
+| Goal / Action                  | Command / Usage                                                                         | Description                                                                              |
+| :----------------------------- | :-------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------- |
+| **Inspect Goal at Line $N$**   | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --json`                        | Evaluates file up to line $N$ and returns focused hypotheses and target in JSON.         |
+| **Inline Code Goal Check**     | `python3 scripts/rocq_goal.py --code "Theorem t : True. Proof." --json`                 | Evaluates raw code string without requiring a disk file.                                 |
+| **Targeted Lemma Search**      | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --search "concl:(_ <= _)"`     | Runs `Search concl:(_ <= _).` at the active proof state and returns top results.         |
+| **Property Test (QuickChick)** | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --search "QuickCheck prop"`    | Executes randomized property test and parses success, counterexample, or discard status. |
+| **Locate Notation / Symbol**   | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --search "Locate \"++\""`      | Resolves user notation to canonical Gallina constant (e.g., `app`).                      |
+| **Audit Implicit Arguments**   | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --search "About Nat.le_trans"` | Prints lemma signature, implicit brackets (`[ ]` vs `{ }`), and explicit arguments.      |
+| **Verify Term Well-Typedness** | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --search "Check (x + y)"`      | Validates expression type in local context before applying a rewrite or assertion.       |
 
 ---
 
@@ -53,8 +54,8 @@ graph TD
   C -- "Error / Syntax Failure" --> D["Inspect error_message; Backtrack to line N-1"]
   D --> B
   C -- "Subgoals > 0" --> E["Read Target & Hypotheses; Choose 1 Tactic Step"]
-  E --> F{"Need Lemma?"}
-  F -- "Yes" --> G["Run rocq_goal.py --search 'concl:(...)' & About <lemma>"]
+  E --> F{"Need Lemma or Test?"}
+  F -- "Search / Check" --> G["Run rocq_goal.py --search 'concl:(...)' or QuickCheck"]
   G --> H["Apply Specific Tactic (with bullets / braces)"]
   F -- "No" --> H
   H --> I["Append Tactic to .v; Advance Line Counter"]
@@ -66,8 +67,9 @@ graph TD
 ### Proving Invariants
 
 1. **One Tactical Operation per Step**: Do not generate 20 lines of speculative tactics at once. Apply one logical step (e.g., `induction n as [| n' IHn'].`), run `rocq_goal.py`, verify that subgoals branch as expected, and then address each branch.
-2. **Stateless Replay Safety**: `scripts/rocq_goal.py` employs stateless batch execution: it launches a fresh subshell, streams clean sentences up to the specified line, and parses the exact terminal output. There is no hidden session drift or memory leakage.
-3. **No Blind Retries**: If a tactic fails with `Unable to unify`, do not permute tactic arguments randomly. Query `About <lemma>` or `Check <term>` to determine the required argument types.
+2. **Context Pruning (Destructive Inversion)**: Never leave raw `inversion H.` unpruned. Always use `inversion H; subst; clear H.` to eliminate redundant equalities and prevent hypothesis name jumps.
+3. **Generalizing Dependencies**: If a hypothesis in the target depends on variable `m` while inducting on `n`, execute `generalize dependent m.` prior to `induction n.` to ensure the induction hypothesis quantifies over all `m`.
+4. **Stateless Replay Safety**: `scripts/rocq_goal.py` employs stateless batch execution: it launches a fresh subshell, streams clean sentences up to the specified line, and parses the exact terminal output. There is no hidden session drift or memory leakage.
 
 ---
 
@@ -86,7 +88,7 @@ usage: rocq_goal.py [-h] [--file FILE] [--code CODE] [--line LINE]
 - `--file`: Path to the `.v` source file.
 - `--code`: Raw Rocq/Coq source code string (evaluated directly).
 - `--line`: 1-indexed target line number. Only commands and tactics up to this line are executed.
-- `--search`: Vernacular query to execute at the target state (`Search`, `Locate`, `About`, `Check`, or `Print`).
+- `--search`: Vernacular query to execute at the target state (`Search`, `Locate`, `About`, `Check`, `Print`, `QuickCheck`, `Sample`).
 - `--max-search`: Maximum number of search results to capture (default: 25).
 - `--project-dir`: Directory containing `_RocqProject` or `_CoqProject`. If omitted, parent directories are searched automatically.
 - `--timeout`: Maximum subprocess execution time in seconds (default: 15).
@@ -109,6 +111,11 @@ When `--json` is supplied, the tool produces structured diagnostics matching thi
   "shelved_count": 0,
   "has_given_up_warning": false,
   "soundness_violation": null,
+  "quickchick": {
+    "status": "passed",
+    "tests": 10000,
+    "discards": 0
+  },
   "search_results": [
     {
       "identifier": "Nat.add_0_r",
@@ -119,15 +126,13 @@ When `--json` is supplied, the tool produces structured diagnostics matching thi
 }
 ```
 
-- `is_done`: `true` only when all goals are cleared AND no cheat tokens (`admit`, `give_up`) exist in the executed prefix.
+- `is_done`: `true` only when all goals are cleared AND no cheat tokens (`admit`, `give_up`, `FILL_IN_HERE`) exist in the executed prefix.
 - `subgoal_count`: Count of active subgoals remaining.
 - `background_goals`: Indices of background pending goals (e.g., `[2, 3]`).
 - `hypotheses`: Clean array of local hypotheses active in the focused goal, with multiline wrapped statements normalized.
 - `target`: The proposition to be proven for the focused goal.
-- `has_evar_warning`: Flags if existential variables (`?X` or `(dependent evars: ...)`) are present.
-- `shelved_count`: Number of shelved goals (`(shelved: N)`).
-- `has_given_up_warning`: Flags if `give_up` / `admit` was executed.
-- `soundness_violation`: Populated if `admit` or `Admitted` is detected, explicitly forcing `is_done: false`.
+- `quickchick`: Parsed test result object (`passed`, `falsifiable` with counterexample, or `gave_up`).
+- `soundness_violation`: Populated if `admit`, `Admitted`, or `FILL_IN_HERE` is detected, explicitly forcing `is_done: false`.
 
 ---
 
@@ -203,6 +208,7 @@ LLMs are prone to bypassing proof obligations when encountering difficult subgoa
 | Disallowed Pattern                       | Hazard / Exploitation                                                  | Prevention & Enforcement                                                             |
 | :--------------------------------------- | :--------------------------------------------------------------------- | :----------------------------------------------------------------------------------- |
 | `admit.` / `give_up.`                    | Drops the current goal and pretends the proof succeeded.               | Detected by `RocqLexer`. Blocks `is_done: true` and sets `soundness_violation`.      |
+| `FILL_IN_HERE`                           | Unsolved exercise placeholder.                                         | Detected by `RocqLexer`. Blocks `is_done: true` and flags soundness violation.       |
 | `Proof. ... Admitted.`                   | Aborts checking and introduces an unproved axiom into the environment. | Static linter (`rocq-ltac-syntax`) and REPL parser flag this immediately as unsound. |
 | `assert (H : Goal). { admit. } apply H.` | Circular reasoning via admitted cut lemma.                             | Flagged by `admit` detection; rejected by `audit_axioms.py` (Soundness Gate Tier 3). |
 | Uninstantiated Evars (`?X`)              | Leaves uninstantiated meta-variables in proof terms.                   | Detected by `has_evar_warning`. Triggers fatal error on `Qed.`.                      |
@@ -231,6 +237,6 @@ A proof is certified complete **only** when `audit_axioms.py` reports:
 
 When encountering specific operational questions, consult the dedicated reference manuals:
 
-- **[`references/interactive_workflow.md`](references/interactive_workflow.md)**: Full step-by-step interactive workflow, recovery from `Wrong bullet` errors, nested branch handling, and clean termination sequences.
-- **[`references/query_commands.md`](references/query_commands.md)**: Complete guide to Vernacular query commands (`Search`, `Locate`, `About`, `Check`, `Print`), positional filters (`concl:`, `hyp:`), and token conservation.
+- **[`references/interactive_workflow.md`](references/interactive_workflow.md)**: Full step-by-step interactive workflow, destructive inversion (`inv`), generalizing dependencies (`generalize dependent`), handling large branching factors, recovery from `Wrong bullet` errors, and clean termination sequences.
+- **[`references/query_commands.md`](references/query_commands.md)**: Complete guide to Vernacular query commands (`Search`, `Locate`, `About`, `Check`, `Print`), property testing (`QuickCheck`), positional filters (`concl:`, `hyp:`), and token conservation.
 - **[`references/tactic_state_reading.md`](references/tactic_state_reading.md)**: Diagnostic reference for understanding proof state layouts, tracking existential variables (Evars), resolving shelved goals (`Unshelve.`), and deciphering unification errors.

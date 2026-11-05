@@ -1,6 +1,6 @@
 # Vernacular Query Reference & Lemma Search Guide
 
-This reference documents the query commands available in the Rocq (formerly Coq) environment—`Search`, `Locate`, `About`, `Check`, and `Print`.
+This reference documents the query commands available in the Rocq (formerly Coq) environment—`Search`, `Locate`, `About`, `Check`, `Print`, and property-based testing commands (`QuickCheck`, `Sample`).
 
 ---
 
@@ -14,6 +14,7 @@ In autonomous formal verification, running broad or unconstrained search queries
 2. **Limit Result Counts**: By default, `scripts/rocq_goal.py` limits search results to 25 entries (`--max-search 25`).
 3. **Two-Stage Lookup for Notations**: When encountering an unfamiliar symbol (such as `++`, `==>`, or `|->`), never query it directly with `Search`. First execute `Locate "<symbol>"` to identify the canonical underlying identifier, then query that identifier with `Search`.
 4. **Inspect Arguments Before Applying**: Before issuing an `apply my_lemma` tactic, inspect its implicit argument structure using `About my_lemma.` to avoid argument count mismatch errors.
+5. **Falsify Conjectures Before Proving**: When verifying a complex property or auxiliary lemma, run `QuickCheck <property>.` first to ensure no obvious counterexamples exist.
 
 ---
 
@@ -158,7 +159,39 @@ apply (@eq_trans nat x y z H1 H2).
 
 ---
 
-## 6. `Check` and `Print` for Local Terms & Inductive Types
+## 6. Property Testing Commands (`QuickCheck`, `Sample`)
+
+In projects where property-based testing is configured, use testing commands to test conjectures before investing effort into a formal proof.
+
+### Usage Protocol
+
+```bash
+python3 scripts/rocq_goal.py --file Foo.v --line 30 --search "QuickCheck my_prop"
+```
+
+### Interpreting Test Outcomes
+
+- **Success (`status: "passed"`)**:
+  ```text
+  Success: Passed 10000 tests (0 discards)
+  ```
+  The conjecture held across generated test cases. Proceed to interactive proof.
+- **Counterexample Found (`status: "falsifiable"`)**:
+  ```text
+  Falsifiable after 5 tests (0 discards)!
+  Shrinking... (2 shrinks)
+  [0, 1]
+  ```
+  The conjecture is false. Inspect the counterexample to reformulate the lemma prerequisites or fix definition edge cases.
+- **Gave up (`status: "gave_up"`)**:
+  ```text
+  Gave up! Passed only 42 tests (5000 discards)
+  ```
+  Preconditions are too restrictive. Adjust generators or test conditional properties with customized generators.
+
+---
+
+## 7. `Check` and `Print` for Local Terms & Inductive Types
 
 ### `Check <term>`: Type Validation in Context
 
