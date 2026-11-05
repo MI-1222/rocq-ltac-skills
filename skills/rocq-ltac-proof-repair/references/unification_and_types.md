@@ -15,11 +15,13 @@ H : double n = 0
 Unable to unify "0" with "n + n".
 ```
 
-or
+or with an explicit elaboration reason:
 
 ```text
-Error: Unable to unify "x + y" with "y + x".
+Error: Unable to unify "x + y" with "y + x" because CannotUnify.
 ```
+
+- **Polarity Rule**: In `Unable to unify "actual" with "expected".`, the left-hand term `"actual"` is the term or lemma conclusion supplied by the applied tactic, while the right-hand term `"expected"` is the target type expected by the active goal or binding.
 
 ### Signature B: Sort / Type Mismatch
 
@@ -30,10 +32,22 @@ H : (x =? y) = true
 The term "H" has type "(x =? y) = true" while it is expected to have type "x = y".
 ```
 
+or sort violations:
+
+```text
+Error: The term "x" has type "nat" which is not a sort.
+```
+
 ### Signature C: Subterm Not Found in Rewrite
 
 ```text
 Error: Found no subterm matching "double ?n" in the current goal.
+```
+
+or in a targeted hypothesis:
+
+```text
+Error: Found no subterm matching "double ?n" in H.
 ```
 
 ---
@@ -50,12 +64,15 @@ Error: Found no subterm matching "double ?n" in the current goal.
    - Equalities like `(x =? y) = true` (boolean equality) and `x = y` (`Prop` identity) are logically related but not definitionally equivalent. They require reflection lemmas to bridge.
 3. **Implicit Argument Deduction**:
    When higher-order lemmas or polymorphic constants are applied without sufficient typing constraints, Rocq's bidirectional elaboration algorithm fails to synthesize unconstrained type arguments or implicit parameters.
+4. **Syntactic Redex Requirements in `rewrite`**:
+   `rewrite` searches for an exact syntactic match in the target clause before attempting unification. If the redex is hidden inside an unexpanded constant, `Found no subterm matching` is raised.
 
 ---
 
 ## 3. Anti-Patterns to Avoid
 
 - ❌ **Blindly repeating `auto`, `reflexivity`, or `easy`**: If two terms are not definitionally convertible, `reflexivity` will fail indefinitely.
+- ❌ **Inverting terms in unification diagnostics**: Treating the left-hand term as the goal and right-hand term as the lemma; always inspect the polarity (`actual` vs `expected`).
 - ❌ **Tweaking `exact H` without type conversion**: Passing a boolean equality directly where a propositional proof is expected without a reflection bridge.
 - ❌ **Indiscriminate `simpl`**: `simpl` can unfold library internals uncontrollably, creating massive, unreadable ASTs that break subsequent lemma matches. Use targeted `unfold`, `cbn`, or `change`.
 
@@ -203,7 +220,7 @@ Proof.
 Qed.
 ```
 
-Alternatively, if rewriting is required:
+Alternatively, expose the redex via `unfold`, `change`, or `setoid_rewrite`:
 
 ```Coq
 Proof.
@@ -218,10 +235,8 @@ Qed.
 
 ## 5. Fallback Procedures
 
-If initial unification fixes fail:
-
-1. **Use `change` for Definitional Alignment**:
-   When `unfold` produces too much clutter, manually rewrite the target term definitionally:
+1. **Use `change` or `replace` for Definitional Alignment**:
+   When `unfold` exposes too much internal definition, manually replace the target term:
    ```Coq
    change (n + n) with (double n) in H.
    ```

@@ -12,7 +12,7 @@ This reference provides techniques to diagnose and repair automated decision pro
 Error: Cannot solve goal with lia.
 ```
 
-The goal involves natural number subtraction underflow ($a - b = 0$ for $a \le b$), non-linear multiplication, or untranslated data types.
+The goal involves natural number subtraction underflow ($a - b = 0$ for $a \le b$), a combinatorial explosion of case splits from `Z.max`, or uninterpreted non-linear terms.
 
 ### Signature B: Congruence / Tauto Failure
 
@@ -26,7 +26,7 @@ or
 Error: tauto failed.
 ```
 
-The goal cannot be solved by pure ground equality, constructor distinctness, or intuitionistic propositional logic without term unfolding or case analysis.
+The goal cannot be solved by pure ground equational reasoning, constructor distinctness, or intuitionistic propositional logic without term unfolding or case analysis.
 
 ### Signature C: Ltac Pattern Match Failure
 
@@ -40,12 +40,19 @@ A custom Ltac macro executed a `match goal with ... end` block where no pattern 
 
 ## 2. Root Cause & Theoretical Background
 
-1. **`lia` and Truncated Natural Subtraction**:
-   `lia` internally translates terms into linear integer arithmetic ($\mathbb{Z}$). On natural numbers (`nat`), subtraction is truncated: $a - b = 0$ whenever $a \le b$.
-   - Because $a - b$ is piecewise linear, `lia` must introduce case distinctions for every occurrence of $-$, causing combinatorial blowup or failing when hypotheses bounding the operands are absent.
-   - Non-linear terms (like $a \times b$ where neither $a$ nor $b$ is a constant) are treated by `lia` as uninterpreted variables.
-2. **`zify` Preprocessing**:
-   Rocq's `lia` tactic runs a preprocessing hook called `zify` that converts `nat`, `N`, and `positive` into $\mathbb{Z}$. Custom types, boolean comparisons, or user functions will not be recognized unless registered with `zify` or explicitly rewritten.
+1. **`zify` Preprocessing and Truncated Subtraction**:
+   `lia` internally operates on linear integer arithmetic ($\mathbb{Z}$) via the `micromega` solver (`plugins/micromega/`).
+   - The `zify` preprocessor lifts terms into $\mathbb{Z}$ using registered type injections (`ZifyClasses`):
+     - `nat -> Z.of_nat`, `N -> Z.of_N`, `positive -> Z.pos`.
+     - Operations `+`, `*`, `S`, `O` map to `Z.add`, `Z.mul`, `Z.succ`, `0%Z`.
+     - Comparisons `<=`, `<`, `=`, `<>` map to their $\mathbb{Z}$ equivalents.
+   - **Truncated Subtraction Blowup**: Natural number subtraction `n - m` is translated into `Z.max 0 (Z.of_nat n - Z.of_nat m)`. Each distinct occurrence of `Z.max a b` induces a case split:
+     $$\text{Branch 1: } a \ge b \quad \Big\vert{} \quad \text{Branch 2: } a < b$$
+     If an expression or hypothesis context contains $k$ natural subtractions or `Nat.pred` terms, `micromega` generates up to $2^k$ constraint branches. When $2^k$ exceeds solver bounds, `Cannot solve goal with lia` is raised.
+2. **`nia` (Non-linear Integer Arithmetic) Boundaries**:
+   `nia` uses polynomial cone heuristics ($x^2 \ge 0$ and $a \ge 0 \land b \ge 0 \implies a \cdot b \ge 0$) to extend `lia`.
+   - **Unsupported Constructs**: Non-integer exponentiation ($x^y$), non-linear modular equations, and integer division/modulo (`Z.div`, `Z.modulo`, `/`, `mod`) cannot be solved by `nia`.
+   - Division must be eliminated manually via `Z.div_mod_eq` or `Nat.div_mod` before invoking `nia`.
 3. **Ltac Failure Levels (`fail 0` vs. `fail 1`)**:
    In Ltac's `match goal with ... end`:
    - If a tactic in a branch fails with level 0 (`fail 0` or standard failure like `discriminate`), Ltac backtracks to the next matching clause or permutation of hypotheses.
@@ -57,6 +64,7 @@ A custom Ltac macro executed a `match goal with ... end` block where no pattern 
 
 - ❌ **Calling removed legacy tactics (`omega`, `romega`, `sos`)**: These tactics were removed in Coq 8.14+ and are fatal syntax errors in Rocq 9.0+. Always import `Lia` and use `lia`.
 - ❌ **Calling `lia` on unbounded `nat` subtraction**: Expecting `lia` to deduce $a \le b$ from $a - b = 0$ without a case split.
+- ❌ **Passing expressions with `div` or `mod` to `nia`**: Expecting non-linear solvers to discharge integer division without manual quotient-remainder lemmas.
 - ❌ **Brittle Ltac `match goal` without fallback**: Omitting a default clause `| _ => idtac`, causing automated proof loops to abort unrecoverably.
 
 ---
@@ -98,7 +106,30 @@ Qed.
 
 ---
 
-### Case 2: Non-Linear Arithmetic with `nia`
+### Case 2: Taming Subtraction Combinatorial Explosion with `zify`
+
+When multiple subtractions cause `lia` to fail:
+
+**Repaired Code:**
+
+```Coq
+From Stdlib Require Import Lia.
+From Stdlib Require Import ZArith.
+
+Lemma multi_sub_example : forall a b c : nat,
+  a <= b -> b <= c -> (c - b) + (b - a) = c - a.
+Proof.
+  intros a b c Hab Hbc.
+  (* Preprocess with zify to expose Z.max *)
+  zify.
+  (* Use known bounds Hab and Hbc so the solver avoids unnecessary case branches *)
+  lia.
+Qed.
+```
+
+---
+
+### Case 3: Non-Linear Arithmetic with `nia` & Division Elimination
 
 **Failing Code (Before):**
 
@@ -125,9 +156,27 @@ Proof.
 Qed.
 ```
 
+When integer division is involved:
+
+```Coq
+From Stdlib Require Import ZArith.
+From Stdlib Require Import Lia.
+Open Scope Z_scope.
+
+Lemma div_mul_bound : forall a b : Z,
+  b > 0 -> a >= 0 -> (a / b) * b <= a.
+Proof.
+  intros a b Hb Ha.
+  (* Eliminate division by asserting the Euclidean division equation *)
+  pose proof (Z.div_mod_eq a b Hb) as Hdiv.
+  pose proof (Z.mod_pos_bound a b Hb).
+  nia.
+Qed.
+```
+
 ---
 
-### Case 3: Robust Ltac Pattern Matching with Fallbacks
+### Case 4: Robust Ltac Pattern Matching with Fallbacks
 
 **Failing Code (Before):**
 
@@ -154,26 +203,6 @@ Use `lazymatch goal` when backtracking over alternative hypothesis bindings is n
 
 ---
 
-### Case 4: Preprocessing with `zify` for Custom Arithmetic Predicates
-
-When reasoning about boolean comparisons or relations that `lia` does not recognize natively:
-
-```Coq
-From Stdlib Require Import Lia.
-From Stdlib Require Import ZArith.
-
-Lemma leb_trans : forall x y z : nat,
-  (x <=? y) = true -> (y <=? z) = true -> (x <=? z) = true.
-Proof.
-  intros x y z H1 H2.
-  (* Convert boolean comparisons to Prop inequalities using zify *)
-  zify.
-  lia.
-Qed.
-```
-
----
-
 ## 5. Fallback Procedures
 
 1. **Isolating Non-Linear Factors with `remember`**:
@@ -188,7 +217,7 @@ Qed.
    unfold my_constructor_alias in *.
    congruence.
    ```
-3. **Manual Arithmetic Lemmas**:
-   When automation cannot close the goal, apply standard lemmas from `Nat` or `Z`:
-   - `apply Nat.mul_le_mono_pos_l; lia.`
-   - `rewrite Nat.add_comm, Nat.add_assoc.`
+3. **Manual Arithmetic Decomposition**:
+   When automation cannot close the goal, rewrite using standard arithmetic lemmas:
+   - `rewrite Nat.mul_comm, Nat.add_assoc.`
+   - `apply Nat.mul_le_mono_l; lia.`

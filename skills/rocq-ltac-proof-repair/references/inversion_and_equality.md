@@ -15,7 +15,7 @@ H2 : e3 = e4
 H3 : ... (dozens of redundant equality assumptions cluttering the context)
 ```
 
-After executing multiple bare `inversion H.` calls, the proof context becomes unmanageable, leading to attention drift and performance degradation.
+After executing multiple bare `inversion H.` calls, the proof context becomes unmanageable, leading to attention drift and script instability.
 
 ### Signature B: Soundness Gate Rejection (Axiom K Contamination)
 
@@ -26,35 +26,44 @@ Coq.Logic.Eqdep.Eq_rect_eq.eq_rect_eq :
   x = eq_rect p (fun (p0 : U) (h0 : p = p0) => Q h0) x p h
 ```
 
-Verification at Tier 3 (`audit_axioms.py` / `Print Assumptions`) fails because a proof relied on Streicher's Axiom K or `JMeq_eq`.
+or dependencies on:
+
+```text
+Coq.Logic.JMeq.JMeq_eq
+Coq.Logic.Eqdep.inj_pair2
+```
+
+Verification at Tier 3 (`audit_axioms.py` / `Print Assumptions`) fails because a proof quietly relied on Uniqueness of Identity Proofs (UIP / Axiom K) or heterogeneous equality axioms introduced by dependent destruction.
 
 ---
 
 ## 2. Root Cause & Theoretical Background
 
 1. **The Inversion Mechanism in CIC**:
-   `inversion H` uses the inductive constructors of $H$'s type to derive equality equations between index terms. It introduces new equality hypotheses ($H_0, H_1, \dots$) into the local context.
-   - If these equalities are not eliminated via substitution (`subst`), they linger indefinitely.
-   - If the inverted hypothesis $H$ is not removed (`clear H`), subsequent automation tactics may repeatedly invert the same hypothesis.
+   `inversion H` (`tactics/inversion.ml`) uses the constructors of $H$'s inductive type to derive equality equations between index terms.
+   - By default, generated hypotheses are assigned fresh identifiers sequentially: `H, H0, H1, H2, ...`.
+   - Scripts that reference these generated names (`H0`, `H1`) without explicit naming patterns are brittle and break when constructors or indices change.
+   - If derived equalities are not eliminated via substitution (`subst`) and the source hypothesis is not removed (`clear H`), the context remains cluttered with redundant terms.
 2. **Axiom K vs. Intensional Type Theory**:
-   The Calculus of Inductive Constructions (CIC) does not include Uniqueness of Identity Proofs (UIP / Axiom K) by default. In intensional type theory, identity proofs for arbitrary types are not necessarily unique.
-   - `dependent destruction` and `dependent inversion` from `Program.Equality` internally rely on `Eqdep.Eq_rect_eq.eq_rect_eq` (Axiom K).
+   The Calculus of Inductive Constructions (CIC) does not include Uniqueness of Identity Proofs (Axiom K) by default. In intensional type theory, identity proofs for arbitrary types are not necessarily unique.
+   - `dependent destruction` and `dependent inversion` from `theories/Program/Equality.v` internally rely on `Eqdep.Eq_rect_eq.eq_rect_eq` (Axiom K) and `JMeq.JMeq_eq`.
    - In projects targeting constructivist, homotopy-compatible, or axiom-free standards, using `dependent destruction` is a soundness violation.
-   - When types have decidable equality (e.g., `nat`, `bool`, `list nat`), UIP is a theorem (Hedberg's Theorem via `Eqdep_dec`), not an axiom.
+   - When index types have decidable equality (e.g., `nat`, `bool`, `list nat`), UIP is provable constructively via `theories/Logic/Eqdep_dec.v` (`inj_pair2_eq_dec`) without any external axioms.
 
 ---
 
 ## 3. Anti-Patterns to Avoid
 
 - ❌ **Bare `inversion H.`**: Never leave `inversion H.` without immediate substitution and hypothesis pruning.
-- ❌ **Unthinking use of `dependent destruction H`**: Avoid introducing Axiom K into what should be purely constructive or kernel-closed proofs.
+- ❌ **Relying on auto-generated names (`H0`, `H1`)**: Always use `inversion H as [...]` or explicitly rename hypotheses immediately after inversion.
+- ❌ **Unthinking use of `dependent destruction H`**: Avoid introducing Axiom K into constructive or kernel-closed proofs.
 - ❌ **Inverting when `destruct` suffices**: If an inductive type has no indexed parameters (e.g., `nat`, `list`, or simple inductive records), use `destruct`, not `inversion`.
 
 ---
 
 ## 4. Concrete Prescriptions (Before & After)
 
-### Case 1: CompCert Destructive Inversion Pipeline
+### Case 1: Destructive Inversion Pipeline
 
 **Failing Code (Before):**
 
@@ -92,10 +101,10 @@ Proof.
 Qed.
 ```
 
-If not using a helper macro, write out the explicit atomic pipeline:
+If not using a helper macro, write out the explicit atomic pipeline or structured pattern:
 
 ```Coq
-inversion H; subst; clear H.
+inversion H as [n0 H0 H1]; subst; clear H.
 ```
 
 ---
@@ -186,7 +195,7 @@ Qed.
    If an equality over a type with decidable equality (like `nat` or `string`) appears in an inductive index, import `Eqdep_dec`:
    ```Coq
    From Stdlib Require Import Eqdep_dec.
-   (* Use inj_pair2_eq_dec with PeanoNat.Nat.eq_dec to eliminate dependent equalities without Axiom K *)
+   (* Use inj_pair2_eq_dec with PeanoNat.Nat.eq_dec to eliminate dependent equalities constructively without Axiom K *)
    apply (inj_pair2_eq_dec _ PeanoNat.Nat.eq_dec) in H.
    ```
 2. **Targeted `subst`**:

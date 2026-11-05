@@ -13,28 +13,39 @@ Error: The term "forall X : Set, X -> X" has type "Type" while it is expected to
 (universe inconsistency: Cannot enforce Set+1 <= Set).
 ```
 
-### Signature B: Cumulative Hierarchy Cycle
+### Signature B: Cumulative Hierarchy Positive Cycle
 
 ```text
 Error: Universe inconsistency: Cannot enforce Top.42 <= Top.41 because Top.41 <= Top.42.
 ```
 
-A circular constraint $i < j < \dots < i$ was generated while elaborating higher-order terms or storing types inside structures.
+or
+
+```text
+Error: Universe inconsistency: Cannot enforce Type@{i} <= Type@{j}.
+```
+
+A circular constraint $u < v \le \dots \le u$ was generated while elaborating higher-order terms or storing types inside inductive structures.
 
 ---
 
 ## 2. Root Cause & Theoretical Background
 
-1. **Stratified Universe Hierarchy**:
-   To prevent Girard's paradox (the type-theoretic equivalent of Russell's paradox), Rocq stratifies types into an infinite hierarchy of universes:
+1. **Stratified Universe Hierarchy in CIC**:
+   To maintain logical consistency and prevent paradoxes arising from type self-containment ($\text{Type} : \text{Type}$), Rocq stratifies types into an infinite hierarchy of universes:
    $$\text{Prop} \subset \text{Type}_0 \subset \text{Type}_1 \subset \text{Type}_2 \subset \dots$$
-   - `Prop` is **impredicative**: a proposition can quantify over all propositions ($\forall P : \text{Prop}, P$) and still live in `Prop`.
-   - `Set` and `Type` are **predicative**: quantifying over `Type_i` produces a term in $\text{Type}_{i+1}$.
+   - `Prop` is **impredicative**: a proposition can quantify over all propositions ($\forall P : \text{Prop}, P$) and still reside in `Prop`.
+   - `Set` and `Type` are **predicative**: quantifying over `Type_i` produces a term residing strictly in $\text{Type}_{i+1}$.
    - Attempting to declare a type that quantifies over all `Set` while forcing the resulting type to live in `Set` generates the fatal constraint `Set+1 <= Set`.
-2. **Monomorphic vs. Polymorphic Definitions**:
-   By default, definitions in Rocq are universe-monomorphic: each occurrence of `Type` is assigned a fixed global universe level. When a generic data structure (e.g., containers, monads, or state transformers) is reused at different universe levels, monomorphic definitions force all levels to coalesce, frequently causing cycles.
-3. **Universe Polymorphism (`Polymorphic`)**:
-   Adding the `Polymorphic` attribute allows definitions to be instantiated with fresh universe variables at each usage site.
+2. **Universe Constraint Graphs (`kernel/uGraph.ml`)**:
+   Rocq represents universe constraints as a weighted directed graph $(\text{Univ}_1, w, \text{Univ}_2)$:
+   - An edge $u \xrightarrow{0} v$ represents $u \le v$.
+   - An edge $u \xrightarrow{+1} v$ represents $u < v$.
+     When adding a constraint $u \le v$, if a path from $v$ to $u$ already exists with total weight plus the new edge weight greater than zero ($W > 0$), a **positive cycle** is formed, and `UniverseInconsistency` is raised.
+3. **Monomorphic vs. Polymorphic Definitions**:
+   By default, definitions in Rocq are universe-monomorphic: each occurrence of `Type` is assigned a fixed global universe level. When a generic data structure (e.g., containers, monads, or state transformers) is reused at different universe levels, monomorphic definitions force all levels to coalesce, frequently causing positive cycles.
+4. **Universe Polymorphism (`#[universes(polymorphic)]`)**:
+   Adding universe polymorphism allows definitions to be parameterized by abstract universe levels (`Univ.AUContext.t`), instantiating fresh universe variables at each usage site.
 
 ---
 
@@ -94,24 +105,26 @@ Inductive Box (A : Type) : Type :=
 Definition wrap (A : Type) (x : A) : Box A := box A x.
 ```
 
-_Note: In Rocq 9.0+, use the modern attribute `#[universes(polymorphic)]` or `Polymorphic Inductive / Definition`._
+For structures with universe subtyping across levels:
+
+```Coq
+#[universes(polymorphic, cumulative)]
+Record Container (A : Type) := {
+  elem : A
+}.
+```
 
 ---
 
 ### Case 3: Modern Universe Syntax in Rocq 9.0+
 
-Legacy Coq syntax `Type@{s;l}` triggers `deprecated-type-sort-poly-syntax`. Rocq 9.0+ requires `Univ@{s;l}`:
-
-**Legacy Syntax (Coq 8.20):**
-
-```Coq
-Definition id_poly@{u} (A : Type@{u}) (x : A) : A := x.
-```
+Legacy Coq syntax `Type@{s;l}` triggers `deprecated-type-sort-poly-syntax`. Rocq 9.0+ standardizes bracketed attributes:
 
 **Modern Syntax (Rocq 9.0+):**
 
 ```Coq
-Polymorphic Definition id_poly@{u} (A : Type@{u}) (x : A) : A := x.
+#[universes(polymorphic)]
+Definition id_poly (A : Type) (x : A) : A := x.
 ```
 
 ---
@@ -125,10 +138,10 @@ Polymorphic Definition id_poly@{u} (A : Type@{u}) (x : A) : A := x.
    Check (Box Type).
    Unset Printing Universes.
    ```
-2. **Stratifying Large Data Structures**:
+2. **Stratifying Higher-Order Data Representations**:
    Instead of storing raw types inside a datatype, store an inductive representation of syntax (a shallow embedding) or parameterize by an explicit signature:
    ```Coq
-   (* Shallow syntax representation avoids higher-order universe cycles *)
+   (* First-order syntax representation avoids higher-order universe cycles *)
    Inductive ty :=
    | TyNat
    | TyBool

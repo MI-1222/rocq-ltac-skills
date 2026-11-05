@@ -1,6 +1,6 @@
 # Termination, Guard Checking & Well-Founded Recursion
 
-This reference provides techniques for diagnosing and repairing `Fixpoint` guard-checker failures, specifying structural arguments, and transitioning to well-founded recursion using `Program Fixpoint` with `measure` in Rocq 9.0+ and Coq 8.20.
+This reference provides techniques for diagnosing and repairing `Fixpoint` guard-checker failures, understanding structurally smaller subterms, specifying structural arguments with `{struct}`, and transitioning to well-founded recursion using `Program Fixpoint` with `measure` in Rocq 9.0+ and Coq 8.20.
 
 ---
 
@@ -12,44 +12,51 @@ This reference provides techniques for diagnosing and repairing `Fixpoint` guard
 Error: Cannot guess decreasing argument of fix.
 ```
 
-Rocq cannot automatically determine which of several arguments structurally decreases in all recursive calls.
+Rocq scans inductive arguments from left to right, but cannot find an argument that syntactically decreases across all recursive branches.
 
 ### Signature B: Non-Structural Recursive Call
 
 ```text
-Error: Recursive call to half_list has argument "tl" which is not structurally smaller.
+Error: Recursive call to "half_list" has argument "tl" which is not structurally smaller.
 ```
 
 or
 
 ```text
-Error: Recursive call to gcd has argument "b" which is not structurally smaller.
+Error: Recursive definition of "gcd" is ill-formed.
+In environment
+...
+Recursive call to "gcd" has argument "a mod b" which is not structurally smaller.
+Recursive calls are only allowed on immediate subterms of "b".
 ```
 
-The recursive argument is mathematically smaller, but not a direct syntactic subterm (e.g., produced by an arithmetic operation like `n - m`, a list function like `tl`, or integer division).
+The recursive argument is mathematically smaller, but not an immediate syntactic subterm (e.g., produced by an arithmetic operation like `a mod b`, a projection like `fst x`, or an intervening function call).
 
 ---
 
 ## 2. Root Cause & Theoretical Background
 
 1. **The Syntactic Guard Condition**:
-   Rocq's kernel enforces strong normalization via a syntactic **Guard Checker**.
-   - Recursive calls in a `Fixpoint` must be applied to an **immediate syntactic subterm** exposed by pattern matching on a single designated decreasing argument.
-   - Any intervening computation—even an identity function or transparent alias—breaks syntactic subterm tracking.
-2. **Multiple Arguments**:
-   When a `Fixpoint` takes multiple arguments, the decreasing argument must be uniquely identified. If multiple arguments decrease alternately, Rocq's default heuristic fails unless annotated with `{struct x}`.
-3. **Well-Founded Relations & Measures**:
-   When a function terminates by decreasing a non-structural quantity (e.g., list length, integer value, tree depth), it must be framed using a well-founded relation:
-   - A relation $R$ on $A$ is well-founded if there are no infinite decreasing chains $x_0 \mathrel{R} x_1 \mathrel{R} x_2 \dots$.
-   - The `Program Fixpoint ... {measure f x}` construct automatically generates proof obligations verifying that the measure strictly decreases at every recursive step according to `lt` on `nat`.
+   Rocq's kernel enforces strong normalization via a syntactic **Guard Checker** (`kernel/inductive.ml`).
+   - Recursive calls in a `Fixpoint` must be applied to an **immediate syntactic subterm** exposed by pattern matching on a designated decreasing argument.
+   - For an argument $x$, matching `match x with C p1 ... pn => ... end` registers each constructor argument variable $p_i$ as an immediate subterm of $x$. Subsequent pattern matching on $p_i$ transitively extends subterm status.
+2. **Patterns That Destroy Structural Subterm Tracking**:
+   - **Tuple Projections**: If $x$ is a pair or record, matching `match x with (a, b) => f a end` is valid, but calling `f (fst x)` is invalid because `fst` is a projection function, not a pattern binder.
+   - **Intervening Function Calls**: Expressions like `f (tl l)` or `f (match l with x :: xs => g xs end)` fail because passing a subterm through an arbitrary function $g$ invalidates subterm tracking.
+   - **Higher-Order Functions**: Passing a subterm inside a lambda to `List.map` fails because the guard checker cannot inspect termination properties of higher-order iterators.
+   - **Let-Aliases**: `let y := x in f y` fails unless $y$ is transparently inlined before guard inspection.
+3. **Automatic Decreasing Argument Inference**:
+   When `{struct ...}` is omitted, Rocq scans arguments from index 0 upward. Only arguments with inductive types are tested. The first argument that satisfies the guard condition across all recursive calls is selected. If no single argument qualifies, `Cannot guess decreasing argument of fix` is raised.
+4. **Well-Founded Measures**:
+   When a function terminates by decreasing a non-structural quantity (e.g., list length, integer value, tree depth), it must be framed using a well-founded relation. `Program Fixpoint ... {measure f x}` generates proof obligations verifying that the measure strictly decreases at each recursive call.
 
 ---
 
 ## 3. Anti-Patterns to Avoid
 
-- ❌ **Shuffling argument order randomly**: Swapping argument positions without understanding which argument is being structurally unwrapped.
+- ❌ **Shuffling argument order blindly**: Swapping parameter positions without understanding which argument is being structurally unwrapped by pattern matching.
 - ❌ **Introducing bogus pattern matches**: Adding dummy `match` layers that obfuscate the code without satisfying the syntactic subterm criterion.
-- ❌ **Ad-hoc fuel arguments everywhere**: Adding a `fuel : nat` parameter to every non-trivial function. While acceptable as a temporary prototype, well-founded recursion is cleaner and does not alter the function's external signature.
+- ❌ **Calling projections instead of destructuring**: Writing `f (fst p)` instead of matching `destruct p as [a b]` and calling `f a`.
 
 ---
 
@@ -85,7 +92,7 @@ Fixpoint ack (m : nat) : nat -> nat :=
   end.
 ```
 
-For simpler functions where Rocq just needs guidance on which argument to track, use `{struct ...}` directly:
+For multi-argument functions where a single argument decreases structurally throughout:
 
 ```Coq
 Fixpoint plus_custom (n m : nat) {struct n} : nat :=
@@ -111,8 +118,7 @@ Fixpoint half_list (l : list nat) : list nat :=
   | [x] => [x]
   | x :: y :: tl => x :: half_list tl
   end.
-(* Error: Cannot guess decreasing argument of fix.
-   tl is extracted from nested pattern, which confuses standard struct detection. *)
+(* Error: Recursive call to "half_list" has argument "tl" which is not structurally smaller. *)
 ```
 
 **Repaired Code (Option A: Explicit Struct on Flattened Match):**
@@ -144,13 +150,13 @@ Program Fixpoint half_list_meas (l : list nat) {measure (length l)} : list nat :
   | other => other
   end.
 Next Obligation.
-  simpl. lia. (* Obligation discharged: length tl < length (x :: y :: tl) *)
+  simpl. lia. (* Discharges obligation: length tl < length (x :: y :: tl) *)
 Qed.
 ```
 
 ---
 
-### Case 3: Division or GCD (Arithmetic Well-Founded Recursion)
+### Case 3: Arithmetic Well-Founded Recursion (Division / GCD)
 
 Functions that divide or take modulo do not decrease structurally on `nat`. Use `Program Fixpoint` with `{measure n}`:
 
@@ -170,24 +176,12 @@ Next Obligation.
 Qed.
 ```
 
-When obligations generate multiple subgoals or require non-trivial bounds:
-
-```Coq
-Program Fixpoint gcd (a b : nat) {measure b} : nat :=
-  if Nat.eqb b 0 then a
-  else gcd b (a mod b).
-Next Obligation.
-  apply Nat.mod_upper_bound.
-  intro Hzero; apply (Nat.eqb_neq b 0); [assumption | symmetry; exact Hzero].
-Qed.
-```
-
 ---
 
 ## 5. Fallback Procedures
 
 1. **Using `Function` with `measure` or `wf`**:
-   The legacy `Function` vernacular generates dedicated induction principles (`<func>_ind`):
+   The `Function` vernacular automatically generates dedicated induction principles (`<func>_ind`):
 
    ```Coq
    From Stdlib Require Import Recdef.
@@ -203,12 +197,12 @@ Qed.
    Qed.
    ```
 
-2. **Explicit `well_founded_induction`**:
-   For complex semantic interpreters or step reductions where `Program Fixpoint` produces unwieldy proof obligations:
+2. **Explicit Fuel Parameterization**:
+   When obligation proofs cannot be settled or in restricted environments:
    ```Coq
-   Lemma my_eval_wf : forall (fuel : nat) (e : expr), ...
-   ```
-   or instantiate `well_founded_induction` on `lt_wf`:
-   ```Coq
-   apply (well_founded_induction lt_wf (fun n => ...)).
+   Fixpoint eval_fuel (fuel : nat) (e : expr) : option val :=
+     match fuel with
+     | 0 => None
+     | S fuel' => ... (recursive calls pass fuel') ...
+     end.
    ```

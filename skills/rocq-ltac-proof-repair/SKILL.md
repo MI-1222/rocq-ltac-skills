@@ -1,6 +1,6 @@
 ---
 name: rocq-ltac-proof-repair
-description: Deterministic error triage, goal state recovery, and minimal surgical proof repair for Rocq (formerly Coq) formal verification in Pure Vanilla Ltac. Use whenever a compilation, elaboration, or tactic fails (e.g., `Unable to unify`, `The term ... has type ... expected ...`, `Cannot guess decreasing argument of fix`, `inversion` hypothesis explosion, lost induction indices, `Cannot solve goal with lia`, `Wrong bullet`, `No matching clauses for match goal`, `Universe inconsistency`, `The reference ... was not found`), when proofs fail with unsolved goals or desynchronized bullets, when encountering suspected false lemmas needing falsification/disproof, or when recovering from tactic thrashing without breaking theorem header fences or admitting proofs.
+description: Deterministic error triage, goal state recovery, and minimal surgical proof repair for Rocq (formerly Coq) formal verification in Pure Vanilla Ltac. Use whenever a compilation, elaboration, or tactic fails (e.g., `Unable to unify`, `The term ... has type ... expected ...`, `Found no subterm matching`, `Cannot guess decreasing argument of fix`, `Recursive call ... not structurally smaller`, `inversion` hypothesis explosion, lost induction indices, `Cannot solve goal with lia`, `Wrong bullet`, `No matching clauses for match goal`, `Universe inconsistency`, `The reference ... was not found`), when proofs fail with unsolved goals or desynchronized bullets, when encountering suspected false lemmas needing falsification/disproof, or when recovering from tactic thrashing without breaking theorem header fences or admitting proofs.
 compatibility: Target Rocq 9.0+ (Backward compatible with Coq 8.20).
 metadata:
   target-prover: "Rocq 9.0+ / Coq 8.20"
@@ -11,9 +11,9 @@ metadata:
 
 # Rocq Ltac Proof Repair & Error Triage
 
-This skill provides a deterministic 4-step repair protocol, a comprehensive error triage matrix, and specialized domain prescriptions for diagnosing and repairing broken proofs in Rocq (formerly Coq) using **Pure Vanilla Ltac**.
+This skill provides a deterministic 4-step repair protocol, an implementation-grounded error triage matrix, and specialized domain prescriptions for diagnosing and repairing broken proofs in Rocq (formerly Coq) using **Pure Vanilla Ltac**.
 
-Autonomous theorem proving agents must never engage in blind trial-and-error or speculative tactic thrashing. When a vernacular command, tactic, or elaboration step fails, follow this protocol to isolate the exact error signature, inspect the active proof state, consult the relevant domain reference, and apply a surgical, minimally invasive patch while strictly preserving the theorem signature and kernel soundness.
+Autonomous theorem proving agents must never engage in blind trial-and-error or speculative tactic thrashing. When a vernacular command, tactic, or elaboration step fails, follow this protocol to isolate the exact compiler error signature, inspect the active proof state, consult the corresponding domain reference, and apply a surgical, minimally invasive patch while strictly preserving the theorem signature and kernel soundness.
 
 ---
 
@@ -34,7 +34,7 @@ Autonomous theorem proving agents must never engage in blind trial-and-error or 
 
 ```mermaid
 graph TD
-  A["Build/Tactic Failure"] --> B["Step 1: Parse & Match Signature"]
+  A["Build/Tactic Failure"] --> B["Step 1: Parse & Match Exact Signature"]
   B --> C["Step 2: Inspect Context via rocq_goal.py --line N"]
   C --> D{"Tactic Thrashing Check"}
   D -- "Goal Unchanged >= 2 Steps" --> E["Halt Thrashing: Consult falsification_and_disproof.md"]
@@ -48,15 +48,18 @@ graph TD
 
 ### Step 1: Parse & Match Error Signature
 
-1. Run the build or extract the compiler error log via [`scripts/parse_diagnostics.py`](../rocq-ltac-cli/scripts/parse_diagnostics.py:1) in `rocq-ltac-cli`.
-2. Identify:
+1. Run the build or extract the compiler error log via [`scripts/parse_diagnostics.py`](../rocq-ltac-cli/scripts/parse_diagnostics.py) in `rocq-ltac-cli`.
+2. Extract:
    - The failing source file and exact line number ($N$).
-   - The raw compiler error message and normalized error code.
-3. Match the raw error text against the [Core Triage Matrix](#2-core-triage-matrix).
+   - The exact raw compiler error message and normalized error code.
+3. Match against the **Core Triage Matrix** (Section 2).
+   - In `Unable to unify "actual" with "expected".`, the left term is the term/lemma conclusion supplied by the tactic, while the right term is the active goal/expected type. Do not invert their polarity.
+   - In `Found no subterm matching ... in ...`, the failure is purely syntactic; definitions in the target have not been unfolded to expose the pattern.
+   - In `The reference ... was not found`, the identifier is unquoted; check missing imports or unopened notation scopes.
 
 ### Step 2: Context & Goal State Inspection
 
-Before modifying the script, obtain the precise proof state immediately prior to the failing command:
+Before editing, query the exact proof state immediately prior to the failing command:
 
 ```bash
 python3 skills/rocq-ltac-interactive-proof/scripts/rocq_goal.py --file <file.v> --line <N-1> --json
@@ -64,51 +67,51 @@ python3 skills/rocq-ltac-interactive-proof/scripts/rocq_goal.py --file <file.v> 
 
 Examine:
 
-- **Focused Goal Target**: What term or equality must be established?
-- **Hypotheses & Types**: Are hypotheses transparent or folded? Are inductive indices abstracted or specialized?
-- **Unification Roadblocks**: Do types match definitionally ($\beta\iota\zeta\delta$-reduction) or only propositionally?
+- **Focused Target**: What term or equality must be established?
+- **Hypotheses & Binders**: Are definitions transparent or folded? Are inductive indices specialized or abstracted?
+- **Subgoal Stack**: Are sibling branches waiting? What is the current bullet level?
 
 ### Step 3: Reference Consultation
 
-Read the specialized reference document mapped to the diagnosed error category in `references/`:
+Read the specialized reference document mapped to the diagnosed category in `references/`:
 
-- Do not invent speculative tactics.
-- Adopt the canonical Before / After prescription patterns detailed in the respective reference file.
+- Do not guess speculative tactics.
+- Apply the implementation-grounded Before / After prescription patterns.
 
 ### Step 4: Minimal Invasive Patching & Verification Ladder
 
-1. **Surgical Scope**: Replace only the failing tactic or focused subproof block. Keep surrounding proofs intact.
-2. **Tier 0 Syntax Gate**: Run `check_syntax.py` to ensure no SSReflect tokens, bad terminators, or broken comments were introduced.
+1. **Surgical Patch**: Replace only the failing tactic or focused subproof block. Keep surrounding proofs intact.
+2. **Tier 0 Syntax Gate**: Run `check_syntax.py` to ensure no dialect mixing, missing periods, or syntax errors were introduced.
 3. **Tier 1 Fast File Gate**: Recompile the single file (`rocq compile -color no <file.v>` or `coqc`).
-4. **Tier 3 Soundness Gate**: When `Qed` is reached, verify proof soundness using `audit_axioms.py` to ensure no unapproved axioms (e.g., Axiom K / `Eqdep.Eq_rect_eq.eq_rect_eq`) or `Admitted` proofs exist.
+4. **Tier 3 Soundness Gate**: When `Qed` is reached, verify soundness using `audit_axioms.py` to ensure no unapproved axioms (e.g., Axiom K / `Eqdep.Eq_rect_eq.eq_rect_eq`) or `Admitted` proofs exist.
 
 ---
 
 ## 2. Core Triage Matrix
 
-| Error Signature Pattern                                                    | Category            | Root Cause                                                                            | Immediate Vanilla Ltac Action                                                                      | Specialized Reference                                                                  |
-| :------------------------------------------------------------------------- | :------------------ | :------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------- |
-| `Unable to unify "(.*)" with "(.*)"`                                       | Unification         | Definitional mismatch; unreduced definitions; `Prop` vs `bool` confusion              | Run `cbn`, `unfold def in *`, `change`, or use reflection lemma (`apply Nat.eqb_eq in H`)          | [`references/unification_and_types.md`](references/unification_and_types.md)           |
-| `The term "(.*)" has type "(.*)" while it is expected to have type "(.*)"` | Type Mismatch       | Mismatched sorts; implicit argument deduction failure                                 | Explicitly supply type parameters with `@lemma` or bridge with equivalence/reflection lemma        | [`references/unification_and_types.md`](references/unification_and_types.md)           |
-| `Found no subterm matching "(.*)" in "(.*)"`                               | Rewrite Failure     | Subterm not syntactically or definitionally present in target/hypothesis              | `unfold` target symbols first; use `setoid_rewrite` or `remember` to align terms                   | [`references/unification_and_types.md`](references/unification_and_types.md)           |
-| `Cannot guess decreasing argument of fix`                                  | Termination         | Non-syntactic recursion; nested calls or accumulator parameters                       | Add explicit `{struct arg}` annotation or switch to `Program Fixpoint ... {measure ...}`           | [`references/termination_and_wf.md`](references/termination_and_wf.md)                 |
-| `Recursive call .* has argument .* which is not structurally smaller`      | Termination         | Argument modified by function (e.g., `div`, `tail`) before recursive call             | Formulate well-founded induction via `well_founded_induction` or `Program Fixpoint`                | [`references/termination_and_wf.md`](references/termination_and_wf.md)                 |
-| Context cluttered with `H0, H1, H2...` after `inversion`                   | Inversion Explosion | Bare `inversion H.` leaves redundant equalities and stale hypotheses                  | Replace bare `inversion H.` with `inversion H; subst; clear H.`                                    | [`references/inversion_and_equality.md`](references/inversion_and_equality.md)         |
-| `dependent destruction` introduced Axiom K                                 | Axiom Contamination | Dependent inversion quietly introduced `Eqdep.Eq_rect_eq.eq_rect_eq`                  | Replace `dependent destruction` with `remember ... as x eqn:E` + `revert` + `induction`            | [`references/inversion_and_equality.md`](references/inversion_and_equality.md)         |
-| Induction on indexed type lost index values                                | Induction Drift     | Applying `induction` directly on complex inductive relations (e.g., `step (EIf ...)`) | Apply `remember <term> as x eqn:Heqx` and `revert` dependencies before `induction`                 | [`references/induction_and_remember.md`](references/induction_and_remember.md)         |
-| `Cannot solve goal with lia`                                               | Arithmetic Failure  | Truncated `nat` subtraction (`a - b = 0`), non-linear terms, or uncast `Z`            | Introduce case split (`Nat.le_gt_cases a b`), normalize with `zify`, or isolate non-linear factors | [`references/tactic_failures.md`](references/tactic_failures.md)                       |
-| `congruence failed` / `tauto failed`                                       | Tactic Failure      | Constructor distinctness requires explicit inversion; unexpanded logical connectives  | Use `destruct ... eqn:...`, `discriminate`, or `injection ... as ...`                              | [`references/tactic_failures.md`](references/tactic_failures.md)                       |
-| `No matching clauses for match goal`                                       | Ltac Automation     | Match pattern missed a goal form; strict pattern failure raised level                 | Add wildcard fallback `\| _ => idtac` or use `try` / `lazymatch` appropriately                     | [`references/tactic_failures.md`](references/tactic_failures.md)                       |
-| `The reference (.*) was not found in the current environment`              | Namespace & Scope   | Rocq 9.0+ split (`Corelib`/`Stdlib`); missing `Require Import`; missing scope         | Use `From Stdlib Require Import ...`; open required scope (`Open Scope Z_scope.`)                  | [`references/namespace_and_imports.md`](references/namespace_and_imports.md)           |
-| `Universe inconsistency: Cannot enforce (.*)`                              | Universe            | Self-referential quantification; pushing high-order types into `Set`                  | Promote sort to `Type`, declare `Polymorphic Definition`, or stratify data representation          | [`references/universe_inconsistencies.md`](references/universe_inconsistencies.md)     |
-| `Wrong bullet (.*): Bullet (.*) is mandatory here`                         | Bullet Focus        | Desynchronized bullet depth (`-`, `+`, `*`); unclosed sibling goal                    | Realign bullet nesting level or isolate subgoals within `{ ... }` curly braces                     | [`references/bullet_and_focus.md`](references/bullet_and_focus.md)                     |
-| Same goal persists after 2 consecutive edits                               | Tactic Thrashing    | Agent trapped in trial-and-error; goal might be logically unprovable (false)          | **HALT edits immediately.** Trigger the 3-phase Falsification Protocol                             | [`references/falsification_and_disproof.md`](references/falsification_and_disproof.md) |
+| Compiler Error Pattern (Regex)                                                                                           | Category            | Root Cause & Implementation Context                                                               | Immediate Vanilla Ltac Action                                                                     | Specialized Reference                                                                  |
+| :----------------------------------------------------------------------------------------------------------------------- | :------------------ | :------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------- |
+| `^Unable to unify "(?P<actual>[\s\S]+)" with "(?P<expected>[\s\S]+)"`                                                    | Unification         | Definitional mismatch ($\beta\iota\zeta\delta$-reduction required); `Prop` vs `bool` confusion    | Run `cbn`, `unfold def in *`, `change`, or bridge via reflection lemma (`apply Nat.eqb_eq in H`)  | [`references/unification_and_types.md`](references/unification_and_types.md)           |
+| `^The term "(?P<term>[\s\S]+)" has type "(?P<actual>[\s\S]+)" while it is expected to have type "(?P<expected>[\s\S]+)"` | Type Mismatch       | Mismatched sorts; failed implicit argument synthesis                                              | Explicitly supply type arguments with `@lemma` or cast using constructor reflection               | [`references/unification_and_types.md`](references/unification_and_types.md)           |
+| `^Found no subterm matching "(?P<pat>[\s\S]+)" in (?P<target>the current goal\|[\s\S]+)`                                 | Rewrite Failure     | Subterm not syntactically or definitionally exposed in target                                     | `unfold` target symbols; use `setoid_rewrite`, or `change` / `replace` to expose matching redex   | [`references/unification_and_types.md`](references/unification_and_types.md)           |
+| `^Cannot guess decreasing argument of fix`                                                                               | Termination         | Guard checker cannot find an inductive argument decreasing in all branches                        | Add explicit `{struct arg}` annotation; inspect left-to-right parameter scan order                | [`references/termination_and_wf.md`](references/termination_and_wf.md)                 |
+| `^Recursive call to "(?P<fn>[^"]+)" has argument "(?P<arg>[^"]+)" which is not structurally smaller`                     | Termination         | Argument modified by function (`div`, `tail`, `fst`) before recursive call; not immediate subterm | Switch to well-founded recursion via `Program Fixpoint ... {measure ...}` or fuel parameter       | [`references/termination_and_wf.md`](references/termination_and_wf.md)                 |
+| Context cluttered with `H0, H1, H2...` after `inversion`                                                                 | Inversion Explosion | Bare `inversion H.` derives redundant index equalities and pollutes context                       | Use `inversion H as [...]` or atomic pipeline `inversion H; subst; clear H.`                      | [`references/inversion_and_equality.md`](references/inversion_and_equality.md)         |
+| `dependent destruction` introduced Axiom K                                                                               | Axiom Contamination | Dependent inversion quietly introduced `Eqdep.Eq_rect_eq.eq_rect_eq`                              | Replace with `remember ... as x eqn:E` + `revert` + `induction`, or `inj_pair2_eq_dec`            | [`references/inversion_and_equality.md`](references/inversion_and_equality.md)         |
+| Induction on indexed type lost index values                                                                              | Induction Drift     | Applying `induction` directly on indexed inductive relations abstracts indices                    | Apply `remember <term> as x eqn:Heqx` and `revert` dependent variables before `induction`         | [`references/induction_and_remember.md`](references/induction_and_remember.md)         |
+| `^Cannot solve goal with lia`                                                                                            | Arithmetic Failure  | Natural number underflow (`a - b = 0`), $2^k$ case split blowup from `Z.max`, or non-linear terms | Case split on underflow (`destruct (Nat.le_gt_cases a b)`), run `zify` and manual split, or `nia` | [`references/tactic_failures.md`](references/tactic_failures.md)                       |
+| `congruence failed` / `tauto failed`                                                                                     | Tactic Failure      | Constructor distinctness masked by definitions; unexpanded logical connectives                    | Use `destruct ... eqn:...`, `discriminate`, or `injection ... as ...`                             | [`references/tactic_failures.md`](references/tactic_failures.md)                       |
+| `No matching clauses for match goal`                                                                                     | Ltac Automation     | Match pattern missed a goal form; strict pattern failure aborted match                            | Add wildcard fallback `\| _ => idtac`, or use `try` / `lazymatch`                                 | [`references/tactic_failures.md`](references/tactic_failures.md)                       |
+| `^The reference (?P<ident>[a-zA-Z0-9_'.]+) was not found in the current environment`                                     | Namespace & Scope   | Rocq 9.0+ split (`Corelib`/`Stdlib`); missing `Require Import`; missing scope                     | Use `From Stdlib Require Import ...`; open required scope (`Open Scope Z_scope.`)                 | [`references/namespace_and_imports.md`](references/namespace_and_imports.md)           |
+| `^Universe inconsistency: Cannot enforce (?P<c1>[^\s]+) <= (?P<c2>[^\s]+)`                                               | Universe            | Positive cycle in universe constraint graph; predicative `Set` self-reference                     | Promote sort to `Type`, declare `#[universes(polymorphic)]`, or stratify data representation      | [`references/universe_inconsistencies.md`](references/universe_inconsistencies.md)     |
+| `^Wrong bullet (?P<got>[^\s:]+): Bullet (?P<expected>[^\s]+) is mandatory here`                                          | Bullet Depth        | Subgoal stack desynchronization; wrong bullet character or length                                 | Replace `<got>` bullet with exact `<expected>` bullet printed by the compiler                     | [`references/bullet_and_focus.md`](references/bullet_and_focus.md)                     |
+| `^Wrong bullet (?P<got>[^\s:]+): Current bullet (?P<current>[^\s]+) is not finished`                                     | Bullet Unfinished   | Preceding sibling subgoal has unresolved goals                                                    | Close the preceding subgoal completely before introducing the next sibling bullet                 | [`references/bullet_and_focus.md`](references/bullet_and_focus.md)                     |
+| `^Wrong bullet (?P<got>[^\s:]+): No more subgoals`                                                                       | Bullet Excess       | All subgoals at the current focus level are already closed                                        | Remove the excess bullet or conclude proof with `Qed.`                                            | [`references/bullet_and_focus.md`](references/bullet_and_focus.md)                     |
+| Same goal persists after 2 consecutive edits                                                                             | Tactic Thrashing    | Agent trapped in trial-and-error; goal might be logically unprovable (false)                      | **HALT edits immediately.** Trigger the 3-phase Falsification Protocol                            | [`references/falsification_and_disproof.md`](references/falsification_and_disproof.md) |
 
 ---
 
 ## 3. Strict Soundness Invariants & Anti-Cheating Gates
-
-To guarantee that repaired proofs are valid, robust, and mechanically trustworthy, enforce the following non-negotiable invariants:
 
 1. **Header Fence Immutability (Zero Goal Drift)**:
    - The theorem signature, premise sequence, argument names, and return type MUST NOT be altered under any circumstances.
@@ -133,10 +136,10 @@ Consult these dedicated documents for detailed explanations, failure mechanisms,
 
 - [`references/unification_and_types.md`](references/unification_and_types.md): Resolving definitional mismatches, $\beta\iota\zeta\delta$-reduction (`cbn`, `unfold`, `change`), `bool` vs `Prop` reflection, and implicit arguments (`@lemma`).
 - [`references/induction_and_remember.md`](references/induction_and_remember.md): Preventing index loss on inductive relations with `remember ... as x eqn:Heqx`, `revert` dependencies, and mutual induction schemes.
-- [`references/inversion_and_equality.md`](references/inversion_and_equality.md): Preventing context explosion (`inversion; subst; clear`), avoiding Axiom K from `dependent destruction`, and manual constructor decomposition (`injection`, `discriminate`).
-- [`references/termination_and_wf.md`](references/termination_and_wf.md): Resolving `Cannot guess decreasing argument`, `{struct}` annotations, well-founded recursion, and `Program Fixpoint` with `measure`.
-- [`references/tactic_failures.md`](references/tactic_failures.md): Fixing `lia` arithmetic failures on `nat` subtraction, `zify` normalization, `congruence`/`tauto` breakdowns, and Ltac `match goal` failure level handling.
-- [`references/namespace_and_imports.md`](references/namespace_and_imports.md): Migrating namespaces from `Coq` to `Stdlib` in Rocq 9.0+, managing missing scopes (`Z_scope`), and resolving undefined identifiers.
+- [`references/inversion_and_equality.md`](references/inversion_and_equality.md): Preventing context explosion (`inversion; subst; clear`), avoiding Axiom K from `dependent destruction`, and constructor decomposition (`injection`, `discriminate`).
+- [`references/termination_and_wf.md`](references/termination_and_wf.md): Resolving guard checker failures, `{struct}` annotations, structural subterms, and `Program Fixpoint` with `measure`.
+- [`references/tactic_failures.md`](references/tactic_failures.md): Fixing `lia` arithmetic failures on `nat` subtraction and $Z.max$ case splits, `zify` normalization, `nia` boundaries, and Ltac `match goal` failure levels.
+- [`references/namespace_and_imports.md`](references/namespace_and_imports.md): Migrating namespaces from `Coq` to `Stdlib` in Rocq 9.0+, managing notation scopes (`Z_scope`), and resolving undefined identifiers.
 - [`references/falsification_and_disproof.md`](references/falsification_and_disproof.md): Breaking tactic thrashing loops through 3-phase falsification: `Compute` boundary testing, explicit refutation (`Lemma counter : ~ Target`), and precondition strengthening.
-- [`references/universe_inconsistencies.md`](references/universe_inconsistencies.md): Diagnosing `Universe inconsistency`, handling universe levels, applying `Polymorphic` attributes, and stratifying higher-order structures.
-- [`references/bullet_and_focus.md`](references/bullet_and_focus.md): Fixing `Wrong bullet` errors, mastering bullet hierarchies (`-`, `+`, `*`), and isolating proof branches with `{ ... }` blocks.
+- [`references/universe_inconsistencies.md`](references/universe_inconsistencies.md): Diagnosing `Universe inconsistency`, constraint graph positive cycles, `#[universes(polymorphic)]` attributes, and level stratification.
+- [`references/bullet_and_focus.md`](references/bullet_and_focus.md): Fixing `Wrong bullet` errors (`mandatory here`, `not finished`, `No more subgoals`), bullet repetition rules, and isolating branches with `{ ... }` blocks.
