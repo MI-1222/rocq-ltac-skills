@@ -57,7 +57,7 @@ jobs:
             cp -r skills "$STAGE_DIR/"
           fi
 
-          for doc in README.md LICENSE; do
+          for doc in README.md README.en.md LICENSE; do
             if [ -f "$doc" ]; then
               cp "$doc" "$STAGE_DIR/"
             fi
@@ -78,6 +78,15 @@ jobs:
 
           echo "=== Zip Archive Contents ==="
           unzip -l rocq-ltac-skills.zip
+
+          # 必須ファイル・ディレクトリの存在確認
+          echo "=== Verifying required files exist ==="
+          for required in README.md README.en.md LICENSE skills; do
+            if [ ! -e "$VERIFY_DIR/$required" ]; then
+              echo "::error::Required file '$required' is missing from release archive!"
+              exit 1
+            fi
+          done
 
           # 禁止ファイル・ディレクトリ(.git, .github等)が含まれていないか検証
           echo "=== Verifying no restricted paths leaked ==="
