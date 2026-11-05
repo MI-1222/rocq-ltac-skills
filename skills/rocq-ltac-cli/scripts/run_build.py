@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Safe build runner with process group isolation and deadline timeout controls.
+"""Safe build runner with process group isolation and deadline timeout control.
 
-Executes build commands within dedicated process groups to prevent runaway
-tactic automation from hanging or creating zombie sub-processes, terminating
-entire process trees with SIGKILL upon timeout.
+Prevents process hangs and zombie processes caused by heavily backtracking
+automated proof tactics (e.g., lia, auto 10, eauto) by executing build
+commands within an isolated process group and terminating the entire process
+tree via SIGKILL upon timeout expiration.
 """
 
 import argparse
@@ -16,10 +17,10 @@ from typing import Any
 
 
 def kill_process_group(proc: subprocess.Popen) -> None:
-    """Send SIGKILL to the entire process group.
+    """Send SIGKILL to the entire process group of the given process.
 
     Args:
-        proc: Subprocess object to terminate.
+        proc: Target subprocess object to terminate.
     """
     try:
         if os.name == "nt":
@@ -39,12 +40,12 @@ def execute_build(
     """Execute command in an isolated process group and collect outputs.
 
     Args:
-        command: Command argument list.
+        command: Command argument list to execute.
         timeout_seconds: Timeout threshold in seconds.
-        working_directory: Working directory path.
+        working_directory: Working directory for command execution.
 
     Returns:
-        Dictionary containing command, returncode, timed_out, stdout, stderr.
+        Dictionary containing command, returncode, timed_out flag, stdout, and stderr.
     """
     timed_out = False
     stdout_text = ""
@@ -100,19 +101,19 @@ def execute_build(
 
 
 def parse_arguments() -> argparse.Namespace:
-    """Parse command line arguments.
+    """Parse command-line arguments.
 
     Returns:
         Parsed arguments namespace.
     """
     parser = argparse.ArgumentParser(
-        description="Safe build runner with process group isolation and deadline timeout controls.",
+        description="Safe build runner with process group isolation and timeout control.",
     )
     parser.add_argument(
         "--timeout",
         type=float,
         default=60.0,
-        help="Command timeout in seconds (default: 60.0).",
+        help="Command execution timeout in seconds (default: 60.0).",
     )
     parser.add_argument(
         "--cwd",
@@ -123,12 +124,12 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--raw",
         action="store_true",
-        help="Pass raw stdout and stderr directly instead of formatting as JSON.",
+        help="Directly stream stdout and stderr instead of JSON output.",
     )
     parser.add_argument(
         "command",
         nargs=argparse.REMAINDER,
-        help="Command and arguments to execute (after '--').",
+        help="Command and arguments to execute (specify after '--').",
     )
     return parser.parse_args()
 

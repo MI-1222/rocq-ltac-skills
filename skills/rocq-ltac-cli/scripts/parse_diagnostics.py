@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Compiler and build diagnostics parser for Rocq and Dune outputs.
+"""Diagnostic parser for Rocq, Dune, and Software Foundations test logs.
 
-Strips ANSI sequences and converts single-line and multi-line errors, warnings,
-locations, and warning tags into structured JSON.
+Strips ANSI escape sequences and converts single/multiline errors, warnings,
+file location spans, warning tags, QuickChick counterexample logs,
+and SF check_type signature mismatch/missing definitions into structured JSON.
 """
 
 import argparse
@@ -21,27 +22,34 @@ LOCATION_PATTERN = re.compile(
 
 WARNING_TAG_PATTERN = re.compile(r"\[(?P<tag>[a-zA-Z0-9_\-]+)\]$")
 
+# QuickChick counterexample failure pattern
+QUICKCHICK_FAIL_PATTERN = re.compile(r"^\*\*\*\s+Failed(?:!| after \d+ tests)")
+
+# Software Foundations check_type type mismatch and missing definition patterns
+SF_CHECK_TYPE_WRONG_PATTERN = re.compile(r"^Type: wrong - expected (?P<expected>.+)")
+SF_MISSING_PATTERN = re.compile(r"^Missing:\s+(?P<ident>.+)")
+
 
 def strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from text.
+    """Strip ANSI escape sequences from a string.
 
     Args:
-        text: String containing potential ANSI codes.
+        text: String possibly containing ANSI color/control codes.
 
     Returns:
-        Cleaned plain text string.
+        Clean plain text string.
     """
     return ANSI_ESCAPE_PATTERN.sub("", text)
 
 
 def parse_diagnostics(raw_text: str) -> dict[str, Any]:
-    """Parse raw compiler/Dune log text into structured diagnostics.
+    """Parse raw compiler/test output into structured diagnostic entries.
 
     Args:
-        raw_text: Raw compiler stdout or stderr stream.
+        raw_text: Standard output / standard error streams from compiler or build tool.
 
     Returns:
-        Dictionary containing list of parsed diagnostics, total errors, and total warnings.
+        Dictionary containing list of diagnostics, total errors, and total warnings.
     """
     clean_text = strip_ansi(raw_text)
     lines = clean_text.splitlines()
@@ -66,7 +74,10 @@ def parse_diagnostics(raw_text: str) -> dict[str, Any]:
             message_lines = []
 
     for line in lines:
-        loc_match = LOCATION_PATTERN.match(line.strip())
+        stripped_line = line.strip()
+
+        # 1. Compiler file location header
+        loc_match = LOCATION_PATTERN.match(stripped_line)
         if loc_match:
             commit_current_entry()
 
@@ -93,8 +104,61 @@ def parse_diagnostics(raw_text: str) -> dict[str, Any]:
             }
             continue
 
+        # 2. QuickChick test failure detection
+        if QUICKCHICK_FAIL_PATTERN.match(stripped_line):
+            commit_current_entry()
+            diagnostics.append(
+                {
+                    "file": "",
+                    "line_start": 0,
+                    "line_end": 0,
+                    "char_start": 0,
+                    "char_end": 0,
+                    "severity": "Error",
+                    "message": f"QuickChick test failed: {stripped_line}",
+                    "warning_tags": ["quickchick-counterexample"],
+                }
+            )
+            continue
+
+        # 3. SF check_type signature mismatch detection
+        wrong_match = SF_CHECK_TYPE_WRONG_PATTERN.match(stripped_line)
+        if wrong_match:
+            commit_current_entry()
+            diagnostics.append(
+                {
+                    "file": "",
+                    "line_start": 0,
+                    "line_end": 0,
+                    "char_start": 0,
+                    "char_end": 0,
+                    "severity": "Error",
+                    "message": f"Software Foundations signature mismatch: {stripped_line}",
+                    "warning_tags": ["sf-type-wrong", "goal-drift"],
+                }
+            )
+            continue
+
+        # 4. SF check_type missing definition detection
+        missing_match = SF_MISSING_PATTERN.match(stripped_line)
+        if missing_match:
+            commit_current_entry()
+            diagnostics.append(
+                {
+                    "file": "",
+                    "line_start": 0,
+                    "line_end": 0,
+                    "char_start": 0,
+                    "char_end": 0,
+                    "severity": "Error",
+                    "message": f"Software Foundations missing definition: {stripped_line}",
+                    "warning_tags": ["sf-missing-exercise"],
+                }
+            )
+            continue
+
+        # 5. Normal error and warning line accumulation
         if current_entry is not None:
-            stripped_line = line.strip()
             if stripped_line.startswith("Warning:"):
                 current_entry["severity"] = "Warning"
             elif stripped_line.startswith("Error:"):
@@ -103,7 +167,6 @@ def parse_diagnostics(raw_text: str) -> dict[str, Any]:
                 current_entry["severity"] = "Anomaly"
             message_lines.append(line)
         else:
-            stripped_line = line.strip()
             if stripped_line.startswith(("Error:", "Anomaly:")):
                 diagnostics.append(
                     {
@@ -135,13 +198,13 @@ def parse_diagnostics(raw_text: str) -> dict[str, Any]:
 
 
 def parse_arguments() -> argparse.Namespace:
-    """Parse command line arguments.
+    """Parse command-line arguments.
 
     Returns:
         Parsed arguments namespace.
     """
     parser = argparse.ArgumentParser(
-        description="Rocq and Dune compiler diagnostic log parser.",
+        description="Diagnostic log parser for Rocq, Dune, and Software Foundations.",
     )
     parser.add_argument(
         "file",

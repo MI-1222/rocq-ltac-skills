@@ -1,6 +1,6 @@
 # Rocq Soundness Gate & Axiom Audit Specification
 
-This document details the kernel specifications, `CONTEXT SUMMARY` output formats (`checker/check_stat.ml`), dual verification protocols using `Print Assumptions` and standalone checkers (`rocq check` / `rocqchk`), and anti-cheating disciplines in Rocq (formerly Coq) 9.0+.
+This document details the kernel specifications, `CONTEXT SUMMARY` output formats (`checker/check_stat.ml`), dual verification protocols using `Print Assumptions` and standalone checkers (`rocq check` / `rocqchk`), Software Foundations automated grading mechanisms (`check_type`), and anti-cheating disciplines in Rocq (formerly Coq) 9.0+.
 
 ---
 
@@ -11,21 +11,87 @@ To prevent reward-hacking, agents must pass the **Tier 3: Soundness Gate** after
 
 ```mermaid
 graph TD
-  A["Compilation Succeeded [Exit 0]"] --> B["Tier 3: Launch Soundness Gate<br/>audit_axioms.py"]
-  B --> C{"CONTEXT SUMMARY Check<br/>Axioms: &lt;none&gt;?"}
-  C -- "Unapproved Axiom or admit found" --> D["REJECT: Unsound proof. Roll back edits."]
-  C -- "Axioms: &lt;none&gt; or whitelisted" --> E{"Safety Check Items<br/>All items &lt;none&gt;?"}
-  E -- "Violations found [e.g. type-in-type]" --> D
-  E -- "All safety items clear" --> F{"Standalone Dual Verification<br/>rocq check -o ..."}
-  F -- "Exit 0 & Clean" --> G["TASK COMPLETE: Kernel-Certified Sound"]
-  F -- "Errors" --> D
+  A["Compilation Succeeded [Exit 0]"] --> B["Stage 1: Static Signature Check<br/>*Test.v / check_type [unify]"]
+  B --> C{"Signatures Intact?<br/>Type: ok & No Missing"}
+  C -- "Type: wrong / Missing" --> D["REJECT: Goal Drift or Missing Lemma"]
+  C -- "Passed" --> E["Stage 2: Launch Kernel Soundness Gate<br/>audit_axioms.py / Print Assumptions"]
+  E --> F{"CONTEXT SUMMARY Check<br/>Axioms: <none> or Whitelisted?"}
+  F -- "Unapproved Axiom or Admitted found" --> G["REJECT: Proof Hole / Cheating Detected"]
+  F -- "Clean or Whitelisted" --> H{"Safety Check Items<br/>All items <none>?"}
+  H -- "Violations found [e.g. type-in-type]" --> G
+  H -- "All safety items clear" --> I{"Standalone Dual Verification<br/>rocq check -o ..."}
+  I -- "Exit 0 & Clean" --> J["TASK COMPLETE: Kernel-Certified Sound"]
+  I -- "Errors" --> G
 ```
 
 ---
 
-## 2. Kernel Specification of `CONTEXT SUMMARY` (`check_stat.ml`)
+## 2. The Two-Stage Verification Strategy (Software Foundations Architecture)
 
-In Rocq 9.0+, executing `Print Assumptions <Theorem>.` queries the kernel assumption tracer, emitting a structured summary formatted by `check_stat.ml`:
+Software Foundations (LF, PLF, VFA, QC, SLF, SECF, VC) implements a rigorous two-stage autograding and verification architecture.
+
+### 2.1. Stage 1: Static Signature & Type Validation (`*Test.v`)
+
+Each textbook chapter is paired with a test script (e.g., `lf/BasicsTest.v`, `plf/EquivTest.v`) designed to detect missing declarations or modifications to lemma signatures before executing proofs:
+
+```coq
+Set Warnings "-notation-overridden,-parsing".
+From Coq Require Import Strings.String.
+From LF Require Import Basics.
+
+Parameter MISSING: Type.
+
+Module Check.
+
+Ltac check_type A B :=
+  match type of A with
+  | context[MISSING] => idtac "Missing: " A
+  | ?T => first [unify T B; idtac "Type: ok" | idtac "Type: wrong - expected " B]
+  end.
+
+Ltac print_manual_grade A :=
+  idtac "Manual Grade: " A.
+
+End Check.
+
+From LF Require Import Basics.
+Import Check.
+
+Goal True.
+idtac "-------- nandb --------".
+check_type @nandb (bool -> bool -> bool).
+idtac "-------- mult_S_1 --------".
+check_type @mult_S_1 (forall n m : nat, m = S n -> m * (1 + n) = m * m).
+Abort.
+```
+
+- **Unification (`unify T B`)**: Enforces exact structural equivalence between the student's theorem type and the authoritative specification.
+- **Goal Drift Prevention**: If an agent alters a theorem statement (e.g., weakening `forall n m, m = S n -> ...` by adding trivial preconditions or altering types), `check_type` immediately emits `Type: wrong` and fails.
+- **Missing Detection**: Uncompleted or deleted definitions unify with `MISSING`, printing `Missing: <ident>`.
+
+### 2.2. Stage 2: Kernel Assumptions Audit (`Print Assumptions`)
+
+#### Why Source Code Grepping (`grep admit`) is Prohibited
+
+Simple string matching (`grep -rn "admit" .`) suffers from severe flaws:
+
+- **False Positives**: Flags documentation comments, exercise descriptions, or commented-out examples.
+- **False Negatives**: Fails to catch proofs truncated via `Admitted.`, custom axioms declared elsewhere, or macro-expanded hole tactics.
+
+#### Kernel Registration of Incomplete Proofs
+
+In Coq/Rocq, terminating a theorem with `Admitted.` or leaving an `admit.` tactic converts that proposition into an unproven constant (`Axiom`) within the global kernel environment:
+
+- Named after the theorem itself: `Basics.mult_S_1 : ...`
+- Or named as an admitted stub: `Basics.mult_S_1.Admitted : ...`
+
+Because the kernel tracks all transitive dependencies, executing `Print Assumptions <ident>.` exposes all unfinished obligations deterministically.
+
+---
+
+## 3. Kernel Specification of `CONTEXT SUMMARY` (`check_stat.ml`)
+
+In modern Rocq 9.0+, executing `Print Assumptions <Theorem>.` queries the kernel assumption tracer, emitting a structured summary formatted by `check_stat.ml`:
 
 ```text
 CONTEXT SUMMARY
@@ -40,7 +106,7 @@ CONTEXT SUMMARY
 * Inductives relying on indices not mattering: <none>
 ```
 
-### 2.1. Interpretation Criteria for Summary Items
+### 3.1. Interpretation Criteria for Summary Items
 
 | Summary Label                                                    | Expected Clean Output           | Violation State & Meaning                                                                                  |
 | :--------------------------------------------------------------- | :------------------------------ | :--------------------------------------------------------------------------------------------------------- |
@@ -59,18 +125,16 @@ CONTEXT SUMMARY
 
 ---
 
-## 3. Standalone Verification via `rocq check` (`rocqchk`)
+## 4. Standalone Verification via `rocq check` (`rocqchk`)
 
 For high-assurance certification, run the standalone verification tool `rocq check` (alias `rocqchk`) against compiled `.vo` artifacts in a separate process:
-
-### 3.1. Command Invocation
 
 ```bash
 # Verify target module .vo independently without re-checking dependencies
 rocq check -o -silent -norec MyProject.Semantics
 ```
 
-### 3.2. Key Flags
+### Key Flags
 
 - `-o`, `--output-context`: Print assumption summary and impredicativity status.
 - `-silent`: Suppress verbose constant validation logs.
@@ -79,29 +143,52 @@ rocq check -o -silent -norec MyProject.Semantics
 
 ---
 
-## 4. Prohibited Proof Cheating Patterns
+## 5. Approved Axiom Whitelist (Standard & Software Foundations)
 
-1. **Residual Proof Holes (`admit.` / `Admitted.`)**:
-   - Truncating proofs with `admit.` or `Admitted.`. The kernel records incomplete goals as axioms under `* Axioms:`.
-2. **Goal Drift (Header Tampering)**:
-   - Modifying theorem signatures, introducing contradictory hypotheses (e.g., `False -> ...`), or trivializing conclusions (`x = x`).
-3. **Axiom Smuggling**:
-   - Declaring unverified assumptions via `Axiom`, `Parameter`, or `Conjecture` instead of proving lemmas.
-4. **Quick Compilation Deception**:
-   - Passing `-vos` builds and asserting task completion without producing verified `.vo` files.
+When `--allow-standard-axioms` is explicitly permitted, only approved foundational axioms are accepted:
+
+| Domain / Volume | Approved Axiom Identifier                                             | Mathematical Role                               | Status                    |
+| :-------------- | :-------------------------------------------------------------------- | :---------------------------------------------- | :------------------------ |
+| **Standard/LF** | `Coq.Logic.FunctionalExtensionality.functional_extensionality_dep`    | Dependent functional extensionality             | Permitted under whitelist |
+| **Standard/LF** | `Coq.Logic.FunctionalExtensionality.functional_extensionality`        | Functional extensionality                       | Permitted under whitelist |
+| **Rocq 9.0+**   | `Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep` | Dependent functional extensionality (Rocq 9.0+) | Permitted under whitelist |
+| **Rocq 9.0+**   | `Stdlib.Logic.FunctionalExtensionality.functional_extensionality`     | Functional extensionality (Rocq 9.0+)           | Permitted under whitelist |
+| **Standard/LF** | `Coq.Logic.ProofIrrelevance.proof_irrelevance`                        | Proof irrelevance for `Prop`                    | Permitted under whitelist |
+| **Rocq 9.0+**   | `Stdlib.Logic.ProofIrrelevance.proof_irrelevance`                     | Proof irrelevance for `Prop` (Rocq 9.0+)        | Permitted under whitelist |
+| **PLF / Logic** | `Coq.Logic.Classical_Prop.classic`                                    | Law of Excluded Middle ($P \lor \neg P$)        | Project-conditional       |
+| **Rocq 9.0+**   | `Stdlib.Logic.Classical_Prop.classic`                                 | Law of Excluded Middle (Rocq 9.0+)              | Project-conditional       |
+| **SLF (TLC)**   | `LibAxioms.prop_ext` / `TLC.LibAxioms.prop_ext`                       | Propositional extensionality                    | Permitted in SLF only     |
+| **SLF (TLC)**   | `LibAxioms.fun_ext_dep` / `TLC.LibAxioms.fun_ext_dep`                 | Dependent function extensionality               | Permitted in SLF only     |
+| **SLF (TLC)**   | `LibAxioms.classicT` / `TLC.LibAxioms.classic`                        | Excluded middle in Type / Prop                  | Permitted in SLF only     |
+| **SLF (TLC)**   | `TLC.LibAxioms.indefinite_description`                                | Hilbert's epsilon / Choice operator             | Permitted in SLF only     |
+| **Any Custom**  | `Axiom cheat : ...` or self-referential `Admitted`                    | Unverified assertion / Incomplete theorem       | **STRICTLY REJECTED**     |
 
 ---
 
-## 5. Approved Axiom Whitelist
+## 6. Automated Soundness Auditor Implementation Logic
 
-When `--allow-standard-axioms` is explicitly permitted by project specifications, only the following consistency-preserving axioms are accepted:
+Production autograders (such as `sf-grader` or `scripts/audit_axioms.py`) implement the following parsing logic:
 
-| Axiom Identifier                                                      | Mathematical Role                               | Status                    |
-| :-------------------------------------------------------------------- | :---------------------------------------------- | :------------------------ |
-| `Coq.Logic.FunctionalExtensionality.functional_extensionality_dep`    | Dependent functional extensionality             | Permitted under whitelist |
-| `Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep` | Dependent functional extensionality (Rocq 9.0+) | Permitted under whitelist |
-| `Coq.Logic.ProofIrrelevance.proof_irrelevance`                        | Proof irrelevance for `Prop`                    | Permitted under whitelist |
-| `Stdlib.Logic.ProofIrrelevance.proof_irrelevance`                     | Proof irrelevance for `Prop` (Rocq 9.0+)        | Permitted under whitelist |
-| `Coq.Logic.Classical_Prop.classic`                                    | Law of Excluded Middle ($P \lor \neg P$)        | Project-conditional       |
-| `Stdlib.Logic.Classical_Prop.classic`                                 | Law of Excluded Middle (Rocq 9.0+)              | Project-conditional       |
-| **Any custom user axiom or admitted stub**                            | Unverified assertion                            | **STRICTLY REJECTED**     |
+```python
+def verify_theorem(coqtop_output, target_theorem, allowed_axioms):
+    # 1. Check for purely constructive, closed proof
+    if "Closed under the global context" in coqtop_output:
+        return True, "Passed: Purely closed under global context"
+
+    # 2. Extract axioms from CONTEXT SUMMARY or legacy Axioms block
+    lines = coqtop_output.split("Axioms:")[-1].strip().splitlines()
+    used_axioms = [line.split(":")[0].strip() for line in lines if ":" in line]
+
+    # 3. Check for unfinished theorem (Admitted)
+    if any(target_theorem in ax or "Admitted" in ax for ax in used_axioms):
+        return False, "Failed: Theorem was Admitted or left unfinished"
+
+    # 4. Check for unauthorized axioms
+    disallowed = [ax for ax in used_axioms if ax not in allowed_axioms]
+    if disallowed:
+        return False, f"Failed: Disallowed axioms used: {disallowed}"
+
+    return True, f"Passed: Uses permitted axioms ({used_axioms})"
+```
+
+Agents must pair this audit logic with process timeouts (30-60s) to prevent tactic automation loops from hanging the grader.
