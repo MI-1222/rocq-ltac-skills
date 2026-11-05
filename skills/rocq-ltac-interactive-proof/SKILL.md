@@ -6,7 +6,7 @@ metadata:
   target-prover: "Rocq 9.0+ / Coq 8.20"
   subsystem: "Interactive Proving & REPL State Controller"
   language-dialect: "Pure Vanilla Ltac (100%)"
-  version: "0.0.1"
+  version: "1.0.0-alpha"
 ---
 
 # Rocq Ltac Interactive Proof & REPL State Controller
