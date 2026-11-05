@@ -227,3 +227,43 @@ Proof.
   (* Complete proof *)
 Admitted.
 ```
+
+---
+
+## 6. The Dual Integrity Gate Protocol
+
+In automated evaluation pipelines and verification workflows, guarding against goal drift and incomplete proofs relies on two complementary enforcement gates:
+
+### Gate 1: Static Signature Locking (`Check`)
+
+To prevent an agent or script from subtly altering the theorem statement to make it trivially provable, verification harnesses assert the expected type signature statically:
+
+```coq
+Check ceval_deterministic : forall c st st1 st2,
+  ceval c st st1 -> ceval c st st2 -> st1 = st2.
+```
+
+- If the theorem's arguments, premises, or conclusion differ by even a single character or binder order, Rocq's type checker halts compilation immediately with a type mismatch error.
+
+### Gate 2: Kernel-Level Axiom Auditing (`Print Assumptions`)
+
+To guarantee soundness and prevent cheating via hidden admissions:
+
+```coq
+Print Assumptions ceval_deterministic.
+```
+
+- **Clean Result**:
+  ```text
+  Closed under the global context
+  ```
+  Indicates the proof term is fully closed and relies strictly on constructive Coq/Rocq axioms.
+- **Permitted Axioms**:
+  If explicitly whitelisted by project policy (e.g. `FunctionalExtensionality.functional_extensionality_dep`), they appear under `Axioms:`.
+- **Cheating / Incompletion Failure**:
+  If `admit` / `Admitted` was invoked anywhere in the proof tree or its dependencies, `Print Assumptions` lists:
+  ```text
+  Axioms:
+  Coq.Init.Logic.admit : forall A : Type, A
+  ```
+  Any appearance of `admit` in the assumptions list immediately invalidates the proof and fails the audit.

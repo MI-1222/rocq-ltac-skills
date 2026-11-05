@@ -59,7 +59,7 @@ Before starting, while structuring, and before completing any proof task, verify
 
 - [ ] **Contract Frozen**: Have the original theorem signature and `(** [SPEC] ... *)` docstrings been recorded and protected from edits?
 - [ ] **Decomposition Planned**: If the expected proof script exceeds 30 lines or branches into $\ge 3$ non-trivial cases, have auxiliary lemmas (`Lemma aux_...`) been extracted top-down?
-- [ ] **Idiom Identified**: Does the problem match a standard CS verification pattern (Progress, Preservation, Invariant Induction, Forward Simulation)? -> Consult [`references/cs_verification_idioms.md`](references/cs_verification_idioms.md).
+- [ ] **Idiom Identified**: Does the problem match a standard CS verification pattern (Progress, Preservation, Substitution, Determinism, RTC Invariant Induction, Simulation Diagrams, Separation Logic, Data Structure Representation Invariants)? -> Consult [`references/cs_verification_idioms.md`](references/cs_verification_idioms.md).
 - [ ] **Indices Checked**: Is the induction applied to a predicate with compound indices? If so, prepare the `remember ... as ... eqn:...` pattern. -> Consult [`references/induction_patterns.md`](references/induction_patterns.md).
 
 ### Stage B: Tactic & Context Discipline

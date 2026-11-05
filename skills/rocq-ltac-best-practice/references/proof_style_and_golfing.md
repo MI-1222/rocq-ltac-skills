@@ -133,7 +133,8 @@ Ltac bad_match_loop :=
 ```
 
 - **Hazard**: Each iteration adds a new hypothesis without removing or clearing the original `H`. The match continually triggers on the same premises until an Out of Memory (OOM) crash occurs.
-- **Remedy**: Always consume or clear the matched hypothesis:
+- **Remedy**: Always consume or clear the matched hypothesis, or wrap the match in `progress`:
+
   ```coq
   Ltac good_match_step :=
     match goal with
@@ -141,6 +142,17 @@ Ltac bad_match_loop :=
         let H'' := fresh "H" in
         pose proof (H H') as H''; clear H
     end.
+
+  (** Safe non-diverging normalizer guarded by progress *)
+  Ltac safe_simplify :=
+    repeat progress (
+      match goal with
+      | H : True |- _ => clear H
+      | H : _ /\ _ |- _ => destruct H
+      | H : exists _, _ |- _ => destruct H
+      | H : ?x = ?x |- _ => clear H
+      end
+    ).
   ```
 
 ### ❌ Anti-Pattern 2: Unconstrained `simpl in *`

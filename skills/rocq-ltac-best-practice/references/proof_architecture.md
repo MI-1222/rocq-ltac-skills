@@ -186,3 +186,71 @@ When `subst` fails during `inv H`, it is almost always caused by one of three in
 
 - **For Dependent Inversions**: Switch to `dependent destruction H` (from `From Stdlib Require Import Program.Equality.`) or use the `remember ... as ... eqn:... in H` idiom before `destruct H`.
 - **For Simple Injective Constructors**: Prefer `injection H as ->` or `injection H; intros; subst` over full `inversion` to avoid generating intermediate equations altogether.
+
+---
+
+## 6. Automated Refutation & Contradiction Search (`solve_by_inversion`)
+
+In inductive relations with many constructors (such as operational semantics transitions or typing rules), multiple subgoals are syntactically generated that are impossible under the current hypotheses (e.g., trying to step a known value `value v` and `v --> v'`).
+
+### The Failsafe `solve_by_inversion` Macro
+
+Rather than manually guessing which hypothesis holds the contradiction, use the fail-safe search pattern:
+
+```coq
+Ltac solve_by_inversion_subst tac :=
+  match goal with
+  | H : ?T |- _ =>
+      solve [
+        inversion H; subst; tac
+      ]
+  end.
+
+Ltac solve_by_inversion :=
+  solve_by_inversion_subst idtac.
+
+Ltac solve_by_inverts :=
+  solve_by_inversion.
+```
+
+### Why the `solve [...]` Primitive is Safe:
+
+1. **Atomic Success Mandate**: The `solve [ ... ]` tactical succeeds **only** if the inner tactics completely solve and close the current subgoal. If any unproved subgoals remain, `solve` fails immediately.
+2. **Backtracking Hypothesis Scan**: When `solve` fails on a particular hypothesis `H`, `match goal with` automatically backtracks and binds the next hypothesis in the context.
+3. **No False Discard**: It will never leave a half-destructed, polluted context behind if a hypothesis is not contradictory.
+
+---
+
+## 7. Verification Before Proof: Property-Based Testing Integration
+
+The most expensive failure mode for theorem proving agents is spending hundreds of tokens and compute cycles attempting to prove a **false theorem** (e.g., an inductive lemma where a crucial precondition such as `BST t` or `closed t` was omitted).
+
+### The PBT Pre-Verification Workflow
+
+When formulating a non-trivial theorem or auxiliary invariant:
+
+1. **Test Decidable Properties First**:
+   Convert propositions to executable boolean checks using decidability reflection (`reflect` or `Decidable` typeclasses):
+   ```coq
+   Class Decidable (P : Prop) := {
+     decide : bool;
+     decide_spec : decide = true <-> P
+   }.
+   ```
+2. **Generate Bounded Test Cases**:
+   Define random generators (`Gen`) and shrinkers (`Shrink`). Always enforce a size bound (`sized gen`) on recursive generators to prevent stack overflow during testing:
+   ```coq
+   Instance gen_tree : Gen tree := {
+     arbitrary :=
+       let fix gen_t (size : nat) : G tree :=
+         match size with
+         | O => ret E
+         | S size' =>
+             freq [ (1, ret E);
+                    (3, liftM4 T (gen_t size') arbitrary arbitrary (gen_t size')) ]
+         end
+       in sized gen_t
+   }.
+   ```
+3. **Fail-Fast Counterexample Discovery**:
+   Running a property check beforehand exposes counterexamples in milliseconds, allowing the agent to refine lemma premises _before_ committing to a formal proof attempt.
