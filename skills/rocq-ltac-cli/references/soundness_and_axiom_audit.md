@@ -143,29 +143,56 @@ rocq check -o -silent -norec MyProject.Semantics
 
 ---
 
-## 5. Approved Axiom Whitelist (Standard & Software Foundations)
+## 5. Approved Axiom Whitelist (Standard, Software Foundations & Aeneas)
 
-When `--allow-standard-axioms` is explicitly permitted, only approved foundational axioms are accepted:
+When specific whitelist flags (`--allow-standard-axioms`, `--allow-tlc-axioms`, `--allow-aeneas-axioms`) are enabled, only approved foundational axioms or verified low-level primitives are accepted:
 
-| Domain / Volume | Approved Axiom Identifier                                             | Mathematical Role                               | Status                    |
-| :-------------- | :-------------------------------------------------------------------- | :---------------------------------------------- | :------------------------ |
-| **Standard/LF** | `Coq.Logic.FunctionalExtensionality.functional_extensionality_dep`    | Dependent functional extensionality             | Permitted under whitelist |
-| **Standard/LF** | `Coq.Logic.FunctionalExtensionality.functional_extensionality`        | Functional extensionality                       | Permitted under whitelist |
-| **Rocq 9.0+**   | `Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep` | Dependent functional extensionality (Rocq 9.0+) | Permitted under whitelist |
-| **Rocq 9.0+**   | `Stdlib.Logic.FunctionalExtensionality.functional_extensionality`     | Functional extensionality (Rocq 9.0+)           | Permitted under whitelist |
-| **Standard/LF** | `Coq.Logic.ProofIrrelevance.proof_irrelevance`                        | Proof irrelevance for `Prop`                    | Permitted under whitelist |
-| **Rocq 9.0+**   | `Stdlib.Logic.ProofIrrelevance.proof_irrelevance`                     | Proof irrelevance for `Prop` (Rocq 9.0+)        | Permitted under whitelist |
-| **PLF / Logic** | `Coq.Logic.Classical_Prop.classic`                                    | Law of Excluded Middle ($P \lor \neg P$)        | Project-conditional       |
-| **Rocq 9.0+**   | `Stdlib.Logic.Classical_Prop.classic`                                 | Law of Excluded Middle (Rocq 9.0+)              | Project-conditional       |
-| **SLF (TLC)**   | `LibAxioms.prop_ext` / `TLC.LibAxioms.prop_ext`                       | Propositional extensionality                    | Permitted in SLF only     |
-| **SLF (TLC)**   | `LibAxioms.fun_ext_dep` / `TLC.LibAxioms.fun_ext_dep`                 | Dependent function extensionality               | Permitted in SLF only     |
-| **SLF (TLC)**   | `LibAxioms.classicT` / `TLC.LibAxioms.classic`                        | Excluded middle in Type / Prop                  | Permitted in SLF only     |
-| **SLF (TLC)**   | `TLC.LibAxioms.indefinite_description`                                | Hilbert's epsilon / Choice operator             | Permitted in SLF only     |
-| **Any Custom**  | `Axiom cheat : ...` or self-referential `Admitted`                    | Unverified assertion / Incomplete theorem       | **STRICTLY REJECTED**     |
+| Domain / Volume | Approved Axiom Identifier                                             | Mathematical Role                               | Status                        |
+| :-------------- | :-------------------------------------------------------------------- | :---------------------------------------------- | :---------------------------- |
+| **Standard/LF** | `Coq.Logic.FunctionalExtensionality.functional_extensionality_dep`    | Dependent functional extensionality             | Permitted under standard flag |
+| **Standard/LF** | `Coq.Logic.FunctionalExtensionality.functional_extensionality`        | Functional extensionality                       | Permitted under standard flag |
+| **Rocq 9.0+**   | `Stdlib.Logic.FunctionalExtensionality.functional_extensionality_dep` | Dependent functional extensionality (Rocq 9.0+) | Permitted under standard flag |
+| **Rocq 9.0+**   | `Stdlib.Logic.FunctionalExtensionality.functional_extensionality`     | Functional extensionality (Rocq 9.0+)           | Permitted under standard flag |
+| **Standard/LF** | `Coq.Logic.ProofIrrelevance.proof_irrelevance`                        | Proof irrelevance for `Prop`                    | Permitted under standard flag |
+| **Rocq 9.0+**   | `Stdlib.Logic.ProofIrrelevance.proof_irrelevance`                     | Proof irrelevance for `Prop` (Rocq 9.0+)        | Permitted under standard flag |
+| **PLF / Logic** | `Coq.Logic.Classical_Prop.classic`                                    | Law of Excluded Middle ($P \lor \neg P$)        | Project-conditional           |
+| **Rocq 9.0+**   | `Stdlib.Logic.Classical_Prop.classic`                                 | Law of Excluded Middle (Rocq 9.0+)              | Project-conditional           |
+| **SLF (TLC)**   | `LibAxioms.prop_ext` / `TLC.LibAxioms.prop_ext`                       | Propositional extensionality                    | Permitted under TLC flag only |
+| **SLF (TLC)**   | `LibAxioms.fun_ext_dep` / `TLC.LibAxioms.fun_ext_dep`                 | Dependent function extensionality               | Permitted under TLC flag only |
+| **SLF (TLC)**   | `LibAxioms.classicT` / `TLC.LibAxioms.classic`                        | Excluded middle in Type / Prop                  | Permitted under TLC flag only |
+| **SLF (TLC)**   | `TLC.LibAxioms.indefinite_description`                                | Hilbert's epsilon / Choice operator             | Permitted under TLC flag only |
+| **Aeneas/Rust** | `Primitives.core_mem_drop`                                            | Model for `core::mem::drop`                     | Permitted under Aeneas flag   |
+| **Aeneas/Rust** | `Primitives.alloc_vec_Vec_index` / `_index_mut`                       | Vector indexing primitives                      | Permitted under Aeneas flag   |
+| **Aeneas/Rust** | `Primitives.slice_index_usize` / `_usize_mut`                         | Slice indexing primitives                       | Permitted under Aeneas flag   |
+| **Aeneas/Rust** | `Primitives.array_index_usize` / `_usize_mut`                         | Array indexing primitives                       | Permitted under Aeneas flag   |
+| **Aeneas/Rust** | `Primitives.alloc_slice_to_vec`                                       | Slice to Vector conversion primitive            | Permitted under Aeneas flag   |
+| **Aeneas/Rust** | `Primitives.core_slice_index_Slice_index`                             | Rust slice indexing operator                    | Permitted under Aeneas flag   |
+| **Any Custom**  | `Axiom cheat : ...` or self-referential `Admitted`                    | Unverified assertion / Incomplete theorem       | **STRICTLY REJECTED**         |
 
 ---
 
-## 6. Automated Soundness Auditor Implementation Logic
+## 6. Automatic Module Resolution & CLI Invocations
+
+The `audit_axioms.py` script supports automatic mapping from source file paths (`--file` / `-f`) to logical module paths using `_CoqProject`, `_RocqProject`, or `dune` definitions:
+
+```bash
+# Automatic module derivation from .v file path and Aeneas axiom acceptance:
+python3 skills/rocq-ltac-cli/scripts/audit_axioms.py \
+  --file proofs/Theories/TlvRoundtrip.v \
+  --theorem tlv_unknown_tag_structure_preservation \
+  --allow-aeneas-axioms
+
+# Manual module invocation with JSON artifact output:
+python3 skills/rocq-ltac-cli/scripts/audit_axioms.py \
+  --module Fidelogic.Theories.TlvRoundtrip \
+  --theorem tlv_unknown_tag_structure_preservation \
+  --allow-aeneas-axioms \
+  --json-out build/axiom_audit.json
+```
+
+---
+
+## 7. Automated Soundness Auditor Implementation Logic
 
 Production autograders (such as `sf-grader` or `scripts/audit_axioms.py`) implement the following parsing logic:
 

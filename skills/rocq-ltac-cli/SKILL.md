@@ -48,6 +48,11 @@ This skill provides operational workflows, build system configurations, process 
 
 ## 1. Quick Reference: Common Commands
 
+> **Script Path Resolution Note**:
+> Bundled CLI scripts (`run_build.py`, `audit_axioms.py`, `parse_diagnostics.py`) are located in `skills/rocq-ltac-cli/scripts/` (or `.roo/skills/rocq-ltac-cli/scripts/`).
+> If the project does not have a root `scripts/` directory with these scripts, execute them using their skill-relative paths (e.g., `python3 skills/rocq-ltac-cli/scripts/run_build.py ...`), or create symlinks into the workspace root:
+> `mkdir -p scripts && ln -sf ../skills/rocq-ltac-cli/scripts/*.py scripts/`.
+
 | Command                                                                                   | Purpose                                         | When to Use                                                                    |
 | :---------------------------------------------------------------------------------------- | :---------------------------------------------- | :----------------------------------------------------------------------------- |
 | `python3 scripts/run_build.py --timeout 30 -- rocq compile -color no [FLAGS] <file.v>`    | Fast single-file batch compilation (Tier 1)     | Immediately after closing a proof with `Qed.` to generate `.vo`.               |
@@ -146,8 +151,14 @@ Spawns an isolated `rocq repl -batch -quiet -color no` (or `coqtop -batch -quiet
 # Strict Mode: Zero external axioms allowed (purely constructive / closed proof)
 python3 scripts/audit_axioms.py --module LF.Basics --theorem mult_S_1 --project-dir .
 
+# File Auto-Mapping Mode: Automatically resolves logical module name from .v path via _CoqProject or dune
+python3 scripts/audit_axioms.py --file proofs/Theories/TlvRoundtrip.v --theorem tlv_unknown_tag_structure_preservation
+
 # Whitelist Mode: Allow standard mathematical axioms (Extensionality, Proof Irrelevance, Excluded Middle)
 python3 scripts/audit_axioms.py --module PLF.Equiv --theorem ceval_deterministic --project-dir . --allow-standard-axioms
+
+# Aeneas / Charon Mode: Allow approved low-level extraction axioms (Primitives indexing, slice operations)
+python3 scripts/audit_axioms.py --file proofs/Theories/TlvRoundtrip.v --theorem tlv_unknown_tag_structure_preservation --allow-aeneas-axioms
 ```
 
 - Returns exit code `0` (`sound: true`) ONLY when proof contains no unapproved axioms or residual holes.
