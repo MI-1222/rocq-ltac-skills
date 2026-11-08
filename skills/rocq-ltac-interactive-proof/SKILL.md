@@ -31,6 +31,11 @@ Autonomous theorem proving in Rocq requires continuous feedback from the proof a
 
 ## 1. Quick Reference: Core Proving Commands
 
+> **Script Path Resolution Note**:
+> The bundled REPL script resides at `skills/rocq-ltac-interactive-proof/scripts/rocq_goal.py` (or `.roo/skills/rocq-ltac-interactive-proof/scripts/rocq_goal.py`). If the target repository does not provide `scripts/rocq_goal.py` at its root, execute it using the full skill-relative path:
+> `python3 skills/rocq-ltac-interactive-proof/scripts/rocq_goal.py [ARGS]`
+> Alternatively, symlink it into your workspace: `mkdir -p scripts && ln -sf ../skills/rocq-ltac-interactive-proof/scripts/rocq_goal.py scripts/rocq_goal.py`.
+
 | Goal / Action                  | Command / Usage                                                                         | Description                                                                              |
 | :----------------------------- | :-------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------- |
 | **Inspect Goal at Line $N$**   | `python3 scripts/rocq_goal.py --file <file.v> --line <N> --json`                        | Evaluates file up to line $N$ and returns focused hypotheses and target in JSON.         |
@@ -70,12 +75,14 @@ graph TD
 2. **Context Pruning (Destructive Inversion)**: Never leave raw `inversion H.` unpruned. Always use `inversion H; subst; clear H.` to eliminate redundant equalities and prevent hypothesis name jumps.
 3. **Generalizing Dependencies**: If a hypothesis in the target depends on variable `m` while inducting on `n`, execute `generalize dependent m.` prior to `induction n.` to ensure the induction hypothesis quantifies over all `m`.
 4. **Stateless Replay Safety**: `scripts/rocq_goal.py` employs stateless batch execution: it launches a fresh subshell, streams clean sentences up to the specified line, and parses the exact terminal output. There is no hidden session drift or memory leakage.
+5. **Massive Term Focusing**: When interacting with huge monadic expressions (e.g. multi-step `bind` chains in extracted deserializers), avoid global unrolling. Use `set (x := ...)` to temporarily abstract intermediate sub-chains, `remember ... as x eqn:Heqx` before case splits, or `pattern <term> at N` to surgically isolate redexes for `rewrite`.
 
 ---
 
 ## 3. Tool Usage: `scripts/rocq_goal.py`
 
 `scripts/rocq_goal.py` is the primary interactive interface for examining proof states.
+_(If not located in the project's root `scripts/`, invoke via `python3 skills/rocq-ltac-interactive-proof/scripts/rocq_goal.py` or symlink `ln -sf ../skills/rocq-ltac-interactive-proof/scripts/rocq_goal.py scripts/rocq_goal.py`)_
 
 ### Command-Line Arguments
 
