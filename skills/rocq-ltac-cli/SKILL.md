@@ -6,7 +6,7 @@ metadata:
   target-prover: "Rocq 9.0+ / Coq 8.20"
   subsystem: "CLI, Build Systems & Verification Ladder"
   language-dialect: "Pure Vanilla Ltac (100%)"
-  version: "1.0.0-alpha"
+  version: "1.0.0"
 ---
 
 # Rocq CLI, Build Management & Verification Ladder

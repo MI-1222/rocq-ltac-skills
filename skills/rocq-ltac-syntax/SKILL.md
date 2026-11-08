@@ -6,7 +6,7 @@ metadata:
   target-prover: "Rocq 9.0+ / Coq 8.20"
   subsystem: "Static Syntax & Tier 0 Linter"
   language-dialect: "Pure Vanilla Ltac (100%)"
-  version: "1.0.0-alpha"
+  version: "1.0.0"
 ---
 
 # Rocq Ltac Syntax & Discipline Guide
