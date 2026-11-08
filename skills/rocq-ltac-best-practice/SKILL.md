@@ -6,7 +6,7 @@ metadata:
   target-prover: "Rocq 9.0+ / Coq 8.20"
   subsystem: "Proof Architecture, Contract Invariance & CS Verification"
   language-dialect: "Pure Vanilla Ltac (100%)"
-  version: "1.0.0-alpha"
+  version: "1.0.0"
 ---
 
 # Rocq Ltac Best Practice & Proof Engineering Guide
@@ -25,6 +25,10 @@ This skill provides an authoritative methodology, architectural design patterns,
 | **Contract Linter**  | `lint_proof_contract.py`        | Zero-dependency Python 3.10+ script verifying Header Fence and docstring immutability.       |
 | **Soundness Gate**   | `audit_axioms.py`               | Audits axioms via `Print Assumptions` to ensure `Closed under the global context`.           |
 
+> **Script Path Resolution Note**:
+> Tool scripts (`lint_proof_contract.py`, `check_syntax.py`, `rocq_goal.py`, `audit_axioms.py`) reside in their respective skill subdirectories (e.g. `skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py`).
+> When invoked from a workspace root without top-level symlinks, use their explicit skill paths or create workspace symlinks: `mkdir -p scripts && ln -sf ../skills/*/scripts/*.py scripts/`.
+
 ---
 
 ## 1. The Six Pillars of Rocq Proof Engineering
@@ -42,7 +46,7 @@ graph TD
   Root --> P6["6. Reduction & Transparency<br/>cbn/unfold control & strict Qed encapsulation"]
 ```
 
-1. **Contract Invariance (Header Fence)**: Theorem declarations across all 8 standard keywords (`Theorem`, `Lemma`, `Fact`, `Remark`, `Corollary`, `Proposition`, `Property`, `Example`), type signatures, bracketed attributes (`#[...]`), and specification comments (`(** [SPEC] ... *)`) are **immutable contracts**. Never alter a theorem statement, weaken conclusions, add artificial premises (such as `False ->`), or introduce unapproved axioms.
+1. **Contract Invariance (Header Fence & Model Fence) & Model Sorts**: Theorem declarations across all 8 standard keywords (`Theorem`, `Lemma`, `Fact`, `Remark`, `Corollary`, `Proposition`, `Property`, `Example`), type signatures, bracketed attributes (`#[...]`), model definitions (`Record`, `Inductive`, `Fixpoint`, `Definition`), and specification/model comments (`(** [SPEC] ... *)`, `(** [MODEL] ... *)`) are **immutable contracts**. Never alter a theorem statement, weaken conclusions, add artificial premises (such as `False ->`), or introduce unapproved axioms. In multi-commit incremental developments where new lemmas or models are added, pass `--allow-new-specs` to the contract linter. When defining specification records or relations containing informative terms (`u8`, `usize`, `nat`, `slice`, or items in `Type` / `Set`), define them as `Record ... : Type := ...` (not `: Prop`) to ensure projections are generated.
 2. **Top-Down (Admit-Driven) Proving**: Decompose complex proofs into modular standalone lemmas. Keep individual proof blocks under 30 lines (maximum 50 lines). Use temporary `admit.` during high-level architectural design, and eliminate all admits before submission.
 3. **Context Cleanliness (`inv` Idiom)**: Never leave bare `inversion H.` unmanaged. Always execute `inversion H; subst; clear H.` (the `inv H` macro) to eliminate redundant equation hypotheses, substitute variables, and keep the local context minimal.
 4. **Induction Safety (`remember` Idiom)**: When inducting over relations with compound indices (e.g., `step (EApp e1 e2) e'`), direct `induction` loses structural index constraints. Always apply `remember <term> as x eqn:Heqx` and `revert` dependent hypotheses before `induction`.
@@ -57,7 +61,8 @@ Before starting, while structuring, and before completing any proof task, verify
 
 ### Stage A: Planning & Top-Down Decomposition
 
-- [ ] **Contract Frozen**: Have the original theorem signature and `(** [SPEC] ... *)` docstrings been recorded and protected from edits?
+- [ ] **Contract Frozen**: Have original theorem signatures, model definitions, and `(** [SPEC] ... *)` / `(** [MODEL] ... *)` docstrings been recorded and protected from edits?
+- [ ] **Record Sort Verified**: If defining relation or specification records with data fields (`u8`, `usize`, `nat`, `slice` in `Type` / `Set`), is `Record ... : Type := ...` used instead of `: Prop`? (Prevents `[cannot-define-projection,records,default]`).
 - [ ] **Decomposition Planned**: If the expected proof script exceeds 30 lines or branches into $\ge 3$ non-trivial cases, have auxiliary lemmas (`Lemma aux_...`) been extracted top-down?
 - [ ] **Idiom Identified**: Does the problem match a standard CS verification pattern (Progress, Preservation, Substitution, Determinism, RTC Invariant Induction, Simulation Diagrams, Separation Logic, Data Structure Representation Invariants)? -> Consult [`references/cs_verification_idioms.md`](references/cs_verification_idioms.md).
 - [ ] **Indices Checked**: Is the induction applied to a predicate with compound indices? If so, prepare the `remember ... as ... eqn:...` pattern. -> Consult [`references/induction_patterns.md`](references/induction_patterns.md).
@@ -72,7 +77,7 @@ Before starting, while structuring, and before completing any proof task, verify
 
 ### Stage C: Soundness & Final Contract Audit
 
-- [ ] **Contract Linter**: Run `python3 skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py --original <orig.v> --modified <mod.v> --strict` to verify signature invariance and complete admit elimination.
+- [ ] **Contract Linter**: Run `python3 skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py --file <file.v> --strict` (or `--original <orig.v> --modified <mod.v>`; append `--allow-new-specs` if adding new lemmas/models/specifications incrementally) to verify signature and model invariance and complete admit elimination against git HEAD.
 - [ ] **Syntax Linter**: Run `python3 skills/rocq-ltac-syntax/scripts/check_syntax.py <file.v>` to ensure zero SSReflect dialect mixing or lexical flaws.
 - [ ] **Build & Fast File Gate**: Run `python3 skills/rocq-ltac-cli/scripts/run_build.py -- rocq compile -color no <file.v>` to produce a valid `.vo` binary.
 - [ ] **Soundness Gate**: Run `python3 skills/rocq-ltac-cli/scripts/audit_axioms.py --module <Module> --theorem <Thm>` to confirm `Closed under the global context` with no illegal axioms.
@@ -116,6 +121,6 @@ graph TD
 ```
 
 - **Before Proving**: Snapshot original signatures and verify contracts using [`scripts/lint_proof_contract.py`](scripts/lint_proof_contract.py). Plan top-down decomposition following [`references/proof_architecture.md`](references/proof_architecture.md).
-- **During Proving**: Use `rocq-ltac-interactive-proof` (`scripts/rocq_goal.py`) to inspect live subgoals at each step.
+- **During Proving**: Use `rocq-ltac-interactive-proof` (`skills/rocq-ltac-interactive-proof/scripts/rocq_goal.py`) to inspect live subgoals at each step.
 - **When Stuck**: If tactics fail or types mismatch, switch to `rocq-ltac-proof-repair` for targeted triage.
-- **Before Submission**: Enforce syntax cleanliness with `rocq-ltac-syntax` (`scripts/check_syntax.py`), verify batch builds and audit axioms with `rocq-ltac-cli` (`scripts/run_build.py` & `scripts/audit_axioms.py`), and run `lint_proof_contract.py --strict`.
+- **Before Submission**: Enforce syntax cleanliness with `rocq-ltac-syntax` (`skills/rocq-ltac-syntax/scripts/check_syntax.py`), verify batch builds and audit axioms with `rocq-ltac-cli` (`skills/rocq-ltac-cli/scripts/run_build.py` & `skills/rocq-ltac-cli/scripts/audit_axioms.py`), and run `lint_proof_contract.py --strict` (with `--allow-new-specs` if adding new lemmas/specifications incrementally).

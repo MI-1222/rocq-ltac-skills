@@ -115,6 +115,7 @@ Theorem type_soundness : ...
 - Any comment matching `(** [SPEC] ... *)` present in the original source file is **completely frozen**.
 - Agents are strictly forbidden from editing, deleting, moving, or reformatting `(** [SPEC] ... *)` blocks.
 - Deleting or altering spec docstrings triggers immediate rejection by [`scripts/lint_proof_contract.py`](../scripts/lint_proof_contract.py:1).
+- In incremental development environments where new lemmas and specifications are appended, pass `--allow-new-specs` to verify that existing specifications are monotonically preserved without permitting alteration or deletion.
 
 ### Rule B: Review-Mode Verification
 
@@ -144,15 +145,24 @@ The skill bundles [`scripts/lint_proof_contract.py`](../scripts/lint_proof_contr
 ### CLI Protocol
 
 ```bash
+# Direct Git HEAD Check (validates modified file against git HEAD without temporary files)
+python3 skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py \
+  --file <file.v>
+
 # Intermediate Check (during top-down design; allows temporary admits)
 python3 skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py \
   --original <original_file.v> \
   --modified <modified_file.v>
 
+# Incremental Feature Development (permits adding new lemmas and [SPEC] blocks against git HEAD)
+python3 skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py \
+  --file <file.v> \
+  --allow-new-specs \
+  --strict
+
 # Final Strict Check (before submission; rejects any admit / Admitted)
 python3 skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py \
-  --original <original_file.v> \
-  --modified <modified_file.v> \
+  --file <file.v> \
   --strict
 ```
 
@@ -267,3 +277,28 @@ Print Assumptions ceval_deterministic.
   Coq.Init.Logic.admit : forall A : Type, A
   ```
   Any appearance of `admit` in the assumptions list immediately invalidates the proof and fails the audit.
+
+---
+
+## 7. Model Fence & `(** [MODEL] ... *)` Protection
+
+In verification projects involving extracted models or pure-functional reference models (e.g. Aeneas models, AST interpreters, projection functions, and data structure records), formal contracts require protecting not just theorems (`[SPEC]`), but also the definitions of the models themselves (`[MODEL]`).
+
+### Definition of Model Fence
+
+The **Model Fence** extends the Header Fence immutability guarantee to model definitions:
+
+```coq
+(** [MODEL]
+    Pure functional model extracting unknown tag records. *)
+Fixpoint extract_unknown_records (records : list tlv_TlvRecord_t) : list (u8 * alloc_vec_Vec u8) :=
+  match records with
+  | [] => []
+  | Tlv_TlvRecord_Entry _ :: rs => extract_unknown_records rs
+  | Tlv_TlvRecord_Unknown tag raw :: rs => (tag, raw) :: extract_unknown_records rs
+  end.
+```
+
+- **Protected Keywords**: `Record`, `Inductive`, `CoInductive`, `Fixpoint`, `CoFixpoint`, `Definition`.
+- **Protected Docstrings**: `(** [MODEL] ... *)` and `(** [SPEC] ... *)`.
+- **Incremental Workflow Notice**: When adding new model definitions or new lemmas in a multi-commit task, pass `--allow-new-specs` (or `--incremental`) to `lint_proof_contract.py` to allow monotonic additions while strictly freezing existing models and specifications.

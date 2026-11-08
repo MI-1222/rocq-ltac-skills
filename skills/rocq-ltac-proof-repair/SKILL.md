@@ -6,7 +6,7 @@ metadata:
   target-prover: "Rocq 9.0+ / Coq 8.20"
   subsystem: "Error Triage & Proof Repair"
   language-dialect: "Pure Vanilla Ltac (100%)"
-  version: "1.0.0-alpha"
+  version: "1.0.0"
 ---
 
 # Rocq Ltac Proof Repair & Error Triage
@@ -27,6 +27,10 @@ Autonomous theorem proving agents must never engage in blind trial-and-error or 
 | **Diagnostics Tool** | `parse_diagnostics.py`          | Provided by `rocq-ltac-cli` (`scripts/parse_diagnostics.py`) to parse build logs into JSON.  |
 | **REPL Goal Tool**   | `rocq_goal.py`                  | Provided by `rocq-ltac-interactive-proof` (`scripts/rocq_goal.py`) to inspect subgoals.      |
 | **Soundness Gate**   | `audit_axioms.py`               | Provided by `rocq-ltac-cli` (`scripts/audit_axioms.py`) to verify `Print Assumptions`.       |
+
+> **Script Path Resolution Note**:
+> Supporting scripts reside in their respective skill subdirectories (`skills/<skill-name>/scripts/`).
+> If not symlinked into a top-level `scripts/` directory, invoke them via their relative skill paths (e.g., `python3 skills/rocq-ltac-cli/scripts/parse_diagnostics.py`).
 
 ---
 
@@ -93,7 +97,8 @@ Read the specialized reference document mapped to the diagnosed category in `ref
 | :----------------------------------------------------------------------------------------------------------------------- | :------------------ | :------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------- |
 | `^Unable to unify "(?P<actual>[\s\S]+)" with "(?P<expected>[\s\S]+)"`                                                    | Unification         | Definitional mismatch ($\beta\iota\zeta\delta$-reduction required); `Prop` vs `bool` confusion    | Run `cbn`, `unfold def in *`, `change`, or bridge via reflection lemma (`apply Nat.eqb_eq in H`)  | [`references/unification_and_types.md`](references/unification_and_types.md)           |
 | `^The term "(?P<term>[\s\S]+)" has type "(?P<actual>[\s\S]+)" while it is expected to have type "(?P<expected>[\s\S]+)"` | Type Mismatch       | Mismatched sorts; failed implicit argument synthesis                                              | Explicitly supply type arguments with `@lemma` or cast using constructor reflection               | [`references/unification_and_types.md`](references/unification_and_types.md)           |
-| `^Found no subterm matching "(?P<pat>[\s\S]+)" in (?P<target>the current goal\|[\s\S]+)`                                 | Rewrite Failure     | Subterm not syntactically or definitionally exposed in target                                     | `unfold` target symbols; use `setoid_rewrite`, or `change` / `replace` to expose matching redex   | [`references/unification_and_types.md`](references/unification_and_types.md)           |
+| `^Found no subterm matching "(?P<pat>[\s\S]+)" in (?P<target>the current goal\|[\s\S]+)`                                 | Rewrite Failure     | Subterm not syntactically exposed; or type alias mismatch (`usize` vs `scalar Usize`)             | Run `Set Printing All.`; align with targeted `change (...) with (...)`; or `unfold` redex         | [`references/unification_and_types.md`](references/unification_and_types.md)           |
+| `replace ... with ... by ...` leaves unproven subgoals or fails equation unification                                     | Replace Direction   | `replace A with B` requires proof of `B = A` (reversed polarity); unproven `by` falls through     | Use `replace A with B by (symmetry; exact H)`; isolate with braces `{ replace ... }` or `assert`  | [`references/inversion_and_equality.md`](references/inversion_and_equality.md)         |
 | `^Cannot find a relation to rewrite`                                                                                     | Setoid Rewrite      | Equivalence relation (e.g., `Permutation`) missing `Proper` morphism instance under context       | Bridge via transitivity (`apply Permutation_trans with ...`) or constructor step (`perm_skip`)    | [`references/tactic_failures.md`](references/tactic_failures.md)                       |
 | `^Cannot solve a goal with existential variables`                                                                        | Unresolved Evars    | `eapply` or `eauto` left intermediate witness (e.g. typing domain `?T`) unresolved at `Qed`       | Explicitly provide intermediate witnesses (`eapply Lemma with (var := val)`) or `instantiate`     | [`references/tactic_failures.md`](references/tactic_failures.md)                       |
 | Goal term explodes into unreadable nested `match` clauses                                                                | Simplification      | Unconditional `simpl` unrolled recursive accumulator or fuel function aggressively                | Replace `simpl` with `cbn [fn]` or prove an explicit unroll lemma and rewrite                     | [`references/tactic_failures.md`](references/tactic_failures.md)                       |

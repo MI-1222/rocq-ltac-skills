@@ -137,7 +137,7 @@ To prevent reward hacking and unproven code leaks:
 1. **Phase 1 (Exploration)**: `admit.` and `Admitted.` are permitted **only** during initial top-down skeleton drafting.
 2. **Phase 2 (Proving)**: Replace every `admit.` with an actual proof. Never leave unresolved admits inside `{ ... }` blocks.
 3. **Phase 3 (Submission Gate)**:
-   - Run `python3 skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py --original <orig.v> --modified <mod.v> --strict`
+   - Run `python3 skills/rocq-ltac-best-practice/scripts/lint_proof_contract.py --original <orig.v> --modified <mod.v> --strict` (pass `--allow-new-specs` if adding new lemmas/specifications incrementally).
    - If ANY `admit` or `Admitted` remains, the linter exits with code `1` and aborts submission.
 4. **Circular Assertion Trap**:
    ```coq
@@ -254,3 +254,50 @@ When formulating a non-trivial theorem or auxiliary invariant:
    ```
 3. **Fail-Fast Counterexample Discovery**:
    Running a property check beforehand exposes counterexamples in milliseconds, allowing the agent to refine lemma premises _before_ committing to a formal proof attempt.
+
+---
+
+## 8. Modeling & Specification Records: The Sort Constraint (`Prop` vs `Type`/`Set`)
+
+When structuring domain models, serialized layouts, or relational contracts via Gallina `Record` definitions, autonomous agents must respect Rocq's sort elimination constraints.
+
+### 8.1. The Informative Field Elimination Trap
+
+By default, users often declare relational records in `Prop`:
+
+```coq
+(* ❌ BROKEN: Record declared in Prop with computational data fields *)
+Record serialized_entry (bytes : slice u8) : Prop := mk_entry {
+  ser_payload_len : u8;    (* Informative: u8 : Set / Type *)
+  ser_total_len   : usize; (* Informative: usize : Set / Type *)
+  ser_valid       : is_valid_entry bytes
+}.
+```
+
+Under Rocq's extraction and information erasure rules (the _singleton elimination restriction_), computational data cannot be projected out of a `Prop` unless the inductive type has at most one constructor whose arguments are all non-informative. Consequently, Rocq emits:
+
+```text
+Warning: ser_payload_len cannot be defined because it is informative and
+serialized_entry is not. [cannot-define-projection,records,default]
+```
+
+Because projections are suppressed, field accessor expressions (such as `ser_payload_len e`) trigger immediate compilation failures in downstream lemmas:
+
+```text
+Error: The reference ser_payload_len was not found in the current environment.
+```
+
+### 8.2. Prescribed Modeling Discipline
+
+1. **Sort Rule for Data-Bearing Records**:
+   Whenever a record contains any computational values, length counters, byte buffers, or state objects inhabiting `Type` or `Set`, **always declare the record in `Type`** (or `Set`):
+   ```coq
+   (* ✅ CORRECT: Declared in Type to generate all field projections *)
+   Record serialized_entry (bytes : slice u8) : Type := mk_entry {
+     ser_payload_len : u8;
+     ser_total_len   : usize;
+     ser_valid       : is_valid_entry bytes
+   }.
+   ```
+2. **Pure Logical Records in `Prop`**:
+   Declare `Record ... : Prop` **only** when every field is itself a proposition (`P : Prop`, equalities `x = y`, validity invariants).

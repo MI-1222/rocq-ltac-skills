@@ -38,6 +38,7 @@ class Sentence:
     start_pos: int
     end_pos: int
     line_number: int
+    end_line: int
     is_bullet_or_brace: bool
     contains_admit: bool
 
@@ -56,15 +57,35 @@ class RocqLexer:
         state = LexerState.CODE
         comment_depth = 0
         current_start = 0
-        current_line = 1
-        start_line = 1
+
+        def create_sentence(
+            raw_slice: str, start_p: int, end_p: int, is_bullet: bool
+        ) -> Sentence | None:
+            stripped = raw_slice.strip()
+            if not stripped:
+                return None
+            leading_len = len(raw_slice) - len(raw_slice.lstrip())
+            actual_start = start_p + leading_len
+            trailing_len = len(raw_slice) - len(raw_slice.rstrip())
+            actual_end = end_p - trailing_len
+            start_l = code[:actual_start].count("\n") + 1
+            end_l = code[:actual_end].count("\n") + 1
+            has_admit = bool(
+                re.search(r"\b(admit|Admitted|give_up|FILL_IN_HERE)\b", stripped)
+            )
+            return Sentence(
+                text=stripped,
+                start_pos=actual_start,
+                end_pos=actual_end,
+                line_number=start_l,
+                end_line=end_l,
+                is_bullet_or_brace=is_bullet,
+                contains_admit=has_admit,
+            )
 
         while i < n:
             char = code[i]
             next_char = code[i + 1] if i + 1 < n else ""
-
-            if char == "\n":
-                current_line += 1
 
             if state == LexerState.CODE:
                 # Comment opening: (*
@@ -84,19 +105,11 @@ class RocqLexer:
                 if char in ("{", "}"):
                     prefix = code[current_start:i].strip()
                     if not prefix:
-                        sentences.append(
-                            Sentence(
-                                text=char,
-                                start_pos=i,
-                                end_pos=i + 1,
-                                line_number=current_line,
-                                is_bullet_or_brace=True,
-                                contains_admit=False,
-                            )
-                        )
+                        sent = create_sentence(char, i, i + 1, is_bullet=True)
+                        if sent:
+                            sentences.append(sent)
                         i += 1
                         current_start = i
-                        start_line = current_line
                         continue
 
                 # Bullet sequences (-, +, *) as standalone vernacular statements
@@ -108,19 +121,11 @@ class RocqLexer:
                         while bullet_end < n and code[bullet_end] == b_char:
                             bullet_end += 1
                         b_str = code[i:bullet_end]
-                        sentences.append(
-                            Sentence(
-                                text=b_str,
-                                start_pos=i,
-                                end_pos=bullet_end,
-                                line_number=current_line,
-                                is_bullet_or_brace=True,
-                                contains_admit=False,
-                            )
-                        )
+                        sent = create_sentence(b_str, i, bullet_end, is_bullet=True)
+                        if sent:
+                            sentences.append(sent)
                         i = bullet_end
                         current_start = i
-                        start_line = current_line
                         continue
 
                 # Terminating period: must be followed by whitespace, EOF, or comment start
@@ -134,27 +139,16 @@ class RocqLexer:
                         is_term = True
 
                     if is_term:
-                        sent_text = code[current_start : i + 1].strip()
-                        if sent_text:
-                            has_admit = bool(
-                                re.search(
-                                    r"\b(admit|Admitted|give_up|FILL_IN_HERE)\b",
-                                    sent_text,
-                                )
-                            )
-                            sentences.append(
-                                Sentence(
-                                    text=sent_text,
-                                    start_pos=current_start,
-                                    end_pos=i + 1,
-                                    line_number=start_line,
-                                    is_bullet_or_brace=False,
-                                    contains_admit=has_admit,
-                                )
-                            )
+                        sent = create_sentence(
+                            code[current_start : i + 1],
+                            current_start,
+                            i + 1,
+                            is_bullet=False,
+                        )
+                        if sent:
+                            sentences.append(sent)
                         i += 1
                         current_start = i
-                        start_line = current_line
                         continue
 
             elif state == LexerState.STRING:
@@ -179,21 +173,10 @@ class RocqLexer:
 
             i += 1
 
-        remaining_text = code[current_start:].strip()
-        if remaining_text:
-            has_admit = bool(
-                re.search(r"\b(admit|Admitted|give_up|FILL_IN_HERE)\b", remaining_text)
-            )
-            sentences.append(
-                Sentence(
-                    text=remaining_text,
-                    start_pos=current_start,
-                    end_pos=n,
-                    line_number=start_line,
-                    is_bullet_or_brace=False,
-                    contains_admit=has_admit,
-                )
-            )
+        remaining_text = code[current_start:]
+        sent = create_sentence(remaining_text, current_start, n, is_bullet=False)
+        if sent:
+            sentences.append(sent)
 
         return sentences
 
@@ -368,6 +351,10 @@ class ProofStateParser:
         r"^(?:Rocq|Coq|[A-Za-z_][A-Za-z0-9_']*(?:\s+\(focused\))?)\s*<\s*",
         re.MULTILINE,
     )
+    RE_PROMPT_WITH_NAME = re.compile(
+        r"^(?:(?P<toplevel>Rocq|Coq)|(?P<proof>[A-Za-z_][A-Za-z0-9_']*(?:\s+\(focused\))?))\s*<\s*",
+        re.MULTILINE,
+    )
 
     @classmethod
     def parse_goals(cls, stdout_output: str, stderr_output: str = "") -> dict[str, Any]:
@@ -383,6 +370,8 @@ class ProofStateParser:
             "has_evar_warning": False,
             "shelved_count": 0,
             "has_given_up_warning": False,
+            "in_proof_mode": False,
+            "active_prompt": None,
             "quickchick": None,
             "raw_state": "",
         }
@@ -403,10 +392,41 @@ class ProofStateParser:
         if qc_result:
             result["quickchick"] = qc_result
 
+        # Locate prompt markers to determine whether session is in proof mode or at toplevel
+        prompts = list(cls.RE_PROMPT_WITH_NAME.finditer(stdout_output))
+        active_prompt = prompts[-1] if prompts else None
+        in_proof_mode = bool(active_prompt and active_prompt.group("proof"))
+        result["in_proof_mode"] = in_proof_mode
+        result["active_prompt"] = (
+            active_prompt.group(0).strip() if active_prompt else None
+        )
+
+        # Locate goal separator line (28 equals signs or fallback)
+        sep_matches = list(cls.RE_GOAL_SEP.finditer(stdout_output)) or list(
+            cls.RE_GOAL_SEP_FALLBACK.finditer(stdout_output)
+        )
+        last_sep_idx = sep_matches[-1].start() if sep_matches else -1
+
+        # Locate latest "No more goals." occurrences
+        no_more_goals_indices = [
+            stdout_output.rfind("No more goals."),
+            stdout_output.rfind("No more subgoals."),
+            stdout_output.rfind("Proof completed."),
+        ]
+        last_no_more_goals_idx = max(no_more_goals_indices)
+
+        # Locate latest subgoal count
+        count_matches = list(cls.RE_SUBGOAL_COUNT.finditer(stdout_output))
+        last_count_idx = count_matches[-1].start() if count_matches else -1
+
+        # Determine if proof is complete:
+        # A proof is completed (is_done=True) only if:
+        # 1. "No more goals." occurred after the latest goal separator and after any subgoal counter.
+        # If a goal separator exists after the latest "No more goals.", a new goal is actively open.
         if (
-            "No more goals." in stdout_output
-            or "No more subgoals." in stdout_output
-            or "Proof completed." in stdout_output
+            last_no_more_goals_idx != -1
+            and last_no_more_goals_idx > last_sep_idx
+            and last_no_more_goals_idx > last_count_idx
         ):
             result["is_done"] = True
             result["subgoal_count"] = 0
@@ -424,26 +444,33 @@ class ProofStateParser:
         if cls.RE_GIVEN_UP.search(stdout_output):
             result["has_given_up_warning"] = True
 
-        # Extract latest subgoal count
-        count_matches = list(cls.RE_SUBGOAL_COUNT.finditer(stdout_output))
-        if count_matches:
-            result["subgoal_count"] = int(count_matches[-1].group(1))
-        elif "1 subgoal" in stdout_output.lower() or "1 goal" in stdout_output.lower():
-            result["subgoal_count"] = 1
-
-        # Extract background goals (e.g. goal 2 is:, goal 3 is:)
-        bg_matches = list(cls.RE_BG_GOAL.finditer(stdout_output))
-        result["background_goals"] = [int(m.group(1)) for m in bg_matches]
-
-        # Locate goal separator line (28 equals signs or fallback)
-        sep_matches = list(cls.RE_GOAL_SEP.finditer(stdout_output))
-        if not sep_matches:
-            sep_matches = list(cls.RE_GOAL_SEP_FALLBACK.finditer(stdout_output))
-
         if sep_matches:
             last_sep = sep_matches[-1]
             pre_context = stdout_output[: last_sep.start()]
             post_context = stdout_output[last_sep.end() :]
+
+            # Extract latest subgoal count relevant to the latest goal
+            pre_count_matches = list(cls.RE_SUBGOAL_COUNT.finditer(pre_context))
+            if pre_count_matches:
+                result["subgoal_count"] = int(pre_count_matches[-1].group(1))
+            elif "1 subgoal" in pre_context.lower() or "1 goal" in pre_context.lower():
+                result["subgoal_count"] = 1
+            else:
+                result["subgoal_count"] = 1
+
+            # Extract background goals (e.g. goal 2 is:, goal 3 is:) in the vicinity of current goal
+            bg_start = (
+                pre_count_matches[-1].start()
+                if pre_count_matches
+                else max(0, last_sep.start() - 500)
+            )
+            bg_context = stdout_output[bg_start:]
+            # Bound search by subsequent prompt if any
+            subsequent_prompt = cls.RE_PROMPT.search(bg_context)
+            if subsequent_prompt:
+                bg_context = bg_context[: subsequent_prompt.start()]
+            bg_matches = list(cls.RE_BG_GOAL.finditer(bg_context))
+            result["background_goals"] = sorted({int(m.group(1)) for m in bg_matches})
 
             # Find starting index after the latest "N goal(s)" header in pre_context
             raw_pre_lines = pre_context.strip().splitlines()
@@ -505,6 +532,14 @@ class ProofStateParser:
                     break
                 target_lines.append(line_str)
             result["target"] = "\n".join(target_lines).strip()
+        else:
+            if count_matches:
+                result["subgoal_count"] = int(count_matches[-1].group(1))
+            elif (
+                "1 subgoal" in stdout_output.lower()
+                or "1 goal" in stdout_output.lower()
+            ):
+                result["subgoal_count"] = 1
 
         result["raw_state"] = combined_output
         return result
@@ -643,6 +678,15 @@ def main() -> None:
         help="Target line number (1-indexed). Evaluates code up to this line.",
     )
     parser.add_argument(
+        "--boundary",
+        choices=["enclose", "before", "strict"],
+        default="enclose",
+        help="Sentence boundary handling when --line falls inside a sentence. "
+        "enclose: include the enclosing sentence (default); "
+        "before: truncate to the last sentence ending before or at line; "
+        "strict: fail if line falls in the middle of a sentence.",
+    )
+    parser.add_argument(
         "--search",
         type=str,
         help="Inline Vernacular Search query to evaluate at target state.",
@@ -709,10 +753,42 @@ def main() -> None:
     sentences = RocqLexer.split_sentences(source_code)
     eval_sentences: list[Sentence] = []
     has_tainted_admit = False
+    boundary_adjusted = False
+    boundary_mode_used = "exact"
 
     for s in sentences:
-        if args.line and s.line_number > args.line:
-            break
+        if args.line:
+            if args.boundary == "before":
+                if s.end_line > args.line:
+                    boundary_adjusted = True
+                    boundary_mode_used = "before"
+                    break
+            elif args.boundary == "strict":
+                if s.line_number > args.line:
+                    break
+                if s.end_line > args.line:
+                    err_msg = (
+                        f"Target line {args.line} falls in the middle of a sentence (lines {s.line_number}-{s.end_line}). "
+                        f"Use --boundary enclose or --boundary before."
+                    )
+                    err_dict = {
+                        "is_done": False,
+                        "has_error": True,
+                        "error_message": err_msg,
+                        "subgoal_count": 0,
+                        "hypotheses": [],
+                    }
+                    if args.json:
+                        print(json.dumps(err_dict, indent=2))
+                    else:
+                        print(f"[ERROR] {err_msg}", file=sys.stderr)
+                    sys.exit(1)
+            else:  # enclose
+                if s.line_number > args.line:
+                    break
+                if s.end_line > args.line:
+                    boundary_adjusted = True
+                    boundary_mode_used = "enclose"
         eval_sentences.append(s)
         if s.contains_admit:
             has_tainted_admit = True
@@ -740,6 +816,15 @@ def main() -> None:
         state_res["has_error"] = True
         state_res["error_message"] = stderr.strip() or stdout.strip()
 
+    state_res["evaluated_sentences_count"] = len(eval_sentences)
+    state_res["evaluated_through_line"] = (
+        eval_sentences[-1].end_line if eval_sentences else 0
+    )
+    if args.line:
+        state_res["target_line"] = args.line
+        state_res["boundary_mode"] = boundary_mode_used
+        state_res["boundary_adjusted"] = boundary_adjusted
+
     # Soundness guard: if admitted tokens exist in evaluated prefix, reject completion
     if has_tainted_admit:
         if state_res["is_done"]:
@@ -761,6 +846,12 @@ def main() -> None:
             print(
                 f"[SOUNDNESS VIOLATION] {state_res['soundness_violation']}",
                 file=sys.stderr,
+            )
+        if state_res.get("boundary_adjusted"):
+            print(
+                f"[INFO] Boundary adjusted ({state_res.get('boundary_mode')}): "
+                f"target line was {state_res.get('target_line')}, "
+                f"evaluated through line {state_res.get('evaluated_through_line')}."
             )
         if state_res["has_error"]:
             print(f"[ERROR] {state_res['error_message']}")

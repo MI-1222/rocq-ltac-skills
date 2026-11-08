@@ -378,3 +378,44 @@ Do not invoke unconstrained `auto` or `eauto` with large search depths on arithm
 | **Uninterpreted Equality & Inversion**           | Repeated `inversion; subst`       | `congruence.`                       |
 | **Pure Propositional Logic**                     | Deep `eauto 10`                   | `tauto.` or `intuition.`            |
 | **Contradictory Hypothesis Types**               | `inversion H`                     | `discriminate.` or `congruence.`    |
+
+## 6. Sort Constraints on Records with Informative Fields (`cannot-define-projection`)
+
+### 6.1. The Informative Field in `Prop` Record Pitfall
+
+When defining Gallina `Record` or `Structure` types to encapsulate specifications, parsing relations, or invariants, placing the record in sort `Prop` while including computational data fields (`u8`, `usize`, `nat`, slices, or abstract types in `Type` / `Set`) triggers Rocq's information erasure restrictions.
+
+```Coq
+(* ❌ BROKEN: Record in Prop containing informative fields *)
+Record tlv_entry : Prop := mk_entry {
+  entry_tag : u8;       (* Informative field: u8 is in Set / Type *)
+  entry_len : usize;    (* Informative field: usize is in Set / Type *)
+  entry_valid : True
+}.
+
+(* Compiler Warning:
+   Warning: entry_tag cannot be defined because it is informative and
+   tlv_entry is not. [cannot-define-projection,records,default] *)
+```
+
+### 6.2. Consequence and Fix
+
+When this warning is emitted, Rocq **suppresses generation of the field projection functions** (`entry_tag`, `entry_len`). Downstream references fail with:
+
+```text
+Error: The reference entry_tag was not found in the current environment.
+```
+
+**Resolution Rule**:
+
+- Any `Record` containing fields whose types inhabit `Set` or `Type` **must** be declared with sort `: Type := ...` (or `: Set := ...`).
+- Reserve `Record ... : Prop := ...` strictly for records where **all** fields are propositions (`P : Prop`, equalities `x = y`, etc.).
+
+```Coq
+(* ✅ CORRECT: Record declared in Type generates all projections *)
+Record tlv_entry : Type := mk_entry {
+  entry_tag : u8;
+  entry_len : usize;
+  entry_valid : True
+}.
+```

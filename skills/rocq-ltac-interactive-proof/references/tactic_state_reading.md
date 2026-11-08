@@ -144,3 +144,42 @@ This is detected by `scripts/rocq_goal.py` as an unsound cheat state (`has_given
 | `Error: Cannot solve a goal with existentials.`                          | `reflexivity` or automated decision procedure failed because uninstantiated Evars remain in the goal. | Instantiate the Evar with `instantiate` or supply the witness explicitly.                                    |
 | `Syntax error: '.' expected after [vernac:command]`                      | Missing whitespace after a period or missing period at the end of a command.                          | Ensure the period terminator is followed by a space or newline.                                              |
 | `Wrong bullet [b1]: Current bullet [b2] is not finished.`                | Previous branch was not fully solved before starting the next branch.                                 | Complete the current branch with `reflexivity.`, `lia.`, or `{ ... }`.                                       |
+
+---
+
+## 6. Subterm Focusing in Massive Monadic Bind Expressions (`set`, `remember`, `pattern`)
+
+Programs extracted from systems languages (e.g., via Charon/Aeneas from Rust) frequently yield massive monadic expressions featuring multi-stage `bind` operators (`o <- ...; ...`) and deeply nested `match` branches.
+
+### The Attention Saturation Problem
+
+Unfolding an extracted deserializer (such as `tlv_deserialize_record`) can produce goal expressions spanning hundreds of lines. Trying to perform global rewrites or direct `destruct` on such ASTs overwhelms the model's attention and causes unifications to misfire.
+
+### Idiomatic Surgical Focusing Strategies
+
+1. **Local Abstraction with `set`**:
+   To temporarily collapse a noisy, irrelevant sub-chain of the monadic expression while maintaining definitional convertibility:
+
+   ```coq
+   set (rem_parser := (o <- step2; step3)).
+   (* The goal now concisely displays: o <- step1; rem_parser *)
+   ```
+
+   When the outer proof obligations are discharged, restore the original term with `subst rem_parser` or `unfold rem_parser`.
+
+2. **Branch Isolation with `remember ... as x eqn:Heqx`**:
+   If an intermediate monadic operation produces an option or result that must be case-split, use `remember`:
+
+   ```coq
+   remember (slice_take_prefix u8 s len) as slice_res eqn:Hslice.
+   destruct slice_res as [head_slice |].
+   - (* Success branch: Hslice tracks the equality *)
+   - (* None branch: contradiction or error handling *)
+   ```
+
+3. **Targeted Redex Isolation with `pattern`**:
+   When multiple occurrences of an identical term appear across a massive monadic term, but you only want to rewrite or instantiate a specific occurrence:
+   ```coq
+   pattern (target_subterm) at 1. (* Exposes only the 1st occurrence as a lambda application *)
+   ```
+   This eliminates ambiguous subterm errors in `rewrite` or `apply`.

@@ -6,7 +6,7 @@ metadata:
   target-prover: "Rocq 9.0+ / Coq 8.20"
   subsystem: "Static Syntax & Tier 0 Linter"
   language-dialect: "Pure Vanilla Ltac (100%)"
-  version: "1.0.0-alpha"
+  version: "1.0.0"
 ---
 
 # Rocq Ltac Syntax & Discipline Guide
@@ -166,6 +166,10 @@ To ensure mechanical rigor and eliminate AI proof hallucination or specification
 ## 3. Fast Static Syntax Checker (`scripts/check_syntax.py`)
 
 The skill bundles `scripts/check_syntax.py`, a zero-dependency script relying exclusively on the Python standard library. It performs robust Tier 0 linting before invoking heavy compiler binaries.
+
+> **Script Path Resolution Note**:
+> The bundled linter resides at `skills/rocq-ltac-syntax/scripts/check_syntax.py` (or `.roo/skills/rocq-ltac-syntax/scripts/check_syntax.py`).
+> If not symlinked to the project root `scripts/`, invoke it directly via its relative skill path (e.g., `python3 skills/rocq-ltac-syntax/scripts/check_syntax.py <file.v>`) or symlink it: `mkdir -p scripts && ln -sf ../skills/rocq-ltac-syntax/scripts/check_syntax.py scripts/check_syntax.py`.
 
 ### 3.1. Lexical Sanitization Algorithm
 

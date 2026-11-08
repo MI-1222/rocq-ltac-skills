@@ -130,3 +130,34 @@ If the compiler hangs or consumes excessive memory during `Qed.` validation or `
    ```coq
    change (complex_lhs) with (simplified_rhs).
    ```
+
+---
+
+## 7. Blocked Record Projections & Surgical Simplification via `change`
+
+In verification pipelines featuring rich data models or code extracted from Rust/C (such as Charon/Aeneas), record projection terms often fail to reduce automatically under `cbn`:
+
+### The Blocked Projection Phenomenon
+
+Given a record projection applied to a literal record constructor:
+
+```coq
+tlv_TlvHeader_tag {| tlv_TlvHeader_tag := tag; tlv_TlvHeader_payload_len := len |}
+```
+
+One would expect this to reduce immediately to `tag`. However, when records carry dependent types, implicit universe parameters, or are embedded inside complex monadic bind chains, `cbn` and `simpl` frequently fail to $\iota$-reduce the projection.
+
+### The Antipattern: Invoking `compute`
+
+Invoking `compute.` to force projection reduction is catastrophic: it unfolds the entire monadic infrastructure, option types, and integer arithmetic models into thousands of lines of unmanageable AST.
+
+### The Idiomatic Solution: Surgical `change`
+
+Because a record projection applied to its constructor is definitionally equal to the field value, use `change` to reduce the projection locally and surgically:
+
+```coq
+(* ✅ Slices through blocked projection without unfolding anything else *)
+change (tlv_TlvHeader_tag {| tlv_TlvHeader_tag := tag; tlv_TlvHeader_payload_len := len |}) with tag.
+```
+
+This pattern preserves all surrounding context while instantly resolving the stuck term.

@@ -233,6 +233,104 @@ Qed.
 
 ---
 
+### Case 5: Type Synonym / Alias Syntactic Mismatch in `rewrite` (`usize` vs `scalar Usize`)
+
+In verification environments with extracted code or low-level primitives (e.g., Aeneas for Rust), types frequently use transparent aliases:
+
+```Coq
+Definition usize := scalar Usize.
+Definition u8 := scalar U8.
+```
+
+**Failing Code (Before - Syntactic Head Mismatch):**
+
+Even though `usize` and `scalar Usize` are definitionally identical (convertible), Rocq's `rewrite` performs strict syntactic head matching on the target redex. Furthermore, compound record constructors like `core_ops_range_RangeFrom_t` or `@mkcore_ops_range_RangeFrom_t` may embed explicit type arguments:
+
+```Coq
+(* Current Goal:
+   slice_index (core_ops_range_RangeFrom_t (scalar Usize)) s = ...
+   or
+   core_slice_index_Slice_index ... (@mkcore_ops_range_RangeFrom_t (scalar Usize) 16%usize) ...
+
+   Lemma to rewrite:
+   slice_index_range_from : forall (T : Type),
+     slice_index (core_ops_range_RangeFrom_t usize) s = ... *)
+
+rewrite slice_index_range_from.
+(* Fails: Error: Found no subterm matching "slice_index (core_ops_range_RangeFrom_t usize) s" in the current goal. *)
+```
+
+**Pitfall to Avoid (Indiscriminate Global Change):**
+
+```Coq
+(* ❌ DANGEROUS: Global type change corrupts constant expansions like 16%usize *)
+change (scalar Usize) with usize.
+```
+
+Applying `change` globally across the goal often alters other subterms (e.g., inside constant literals, bounds, or range predicates), causing cascading unification failures downstream.
+
+**Repaired Code (After - Targeted Structural Change Idiom):**
+
+1. **Diagnose with `Set Printing All.`**:
+   Run `Set Printing All.` before the rewrite to observe exact unelaborated type arguments:
+   ```Coq
+   Set Printing All.
+   (* Notice that one side uses "(scalar Usize)" while the other uses "usize" *)
+   Unset Printing All.
+   ```
+2. **Apply Pinpoint Surgical `change` on Types and Constructors**:
+   Wrap the type alias in its immediate surrounding type or record constructor so only the relevant occurrence is rewritten without touching integer scalars:
+
+   ```Coq
+   (* Normalize type signature *)
+   change (core_ops_range_RangeFrom_t (scalar Usize)) with (core_ops_range_RangeFrom_t usize).
+
+   (* Normalize record constructor with explicit type argument *)
+   change (@mkcore_ops_range_RangeFrom_t (scalar Usize)) with (@mkcore_ops_range_RangeFrom_t usize).
+
+   (* Now rewrite succeeds cleanly *)
+   rewrite slice_index_range_from.
+   ```
+
+---
+
+### Case 6: Aeneas Monadic Bind Chains & Premature `cbn [bind]` Rewrite Failures
+
+**Failing Code (Before - Premature Reduction Shreds AST Structure):**
+
+In verification of code extracted with Aeneas from Rust, monadic computations are chained via `bind` (`x <- c1 ; c2`). Executing `cbn [bind]` prematurely unfolds all downstream `bind` occurrences into nested `match ... with | Ok ... | Fail_ ... end` blocks.
+
+```Coq
+(* Current Goal:
+   x <- slice_index_usize s 0%usize;
+   y <- scalar_cast U8 Usize x;
+   rest <- core_slice_index_Slice_index ... s {| core_ops_range_RangeFrom_start := 1%usize |};
+   ... *)
+
+rewrite (ser_cast_lemma ...).
+cbn [bind]. (* ❌ Premature: unfolds all following binds into raw match trees *)
+
+rewrite (ser_slice_lemma ...).
+(* Fails: Error: Found no subterm matching "core_slice_index_Slice_index ..." in the current goal. *)
+```
+
+**Repaired Code (After - Direct Rewrite Chaining or Local Unfolding):**
+
+1. **Chain Rewrites Directly**:
+   Do not insert `cbn [bind]` between sequential rewrite steps. Rocq unifies redexes inside `bind` expressions without unfolding `bind`:
+   ```Coq
+   rewrite (ser_cast_lemma ...).
+   rewrite (ser_slice_lemma ...).
+   cbn [bind]. (* Safe: reduce only after all constituent operations are rewritten *)
+   ```
+2. **Use Occurrence Specifiers (`unfold bind at 1`)**:
+   If the head bind must be computed to expose a value, unfold exclusively the leftmost occurrence:
+   ```Coq
+   unfold bind at 1.
+   ```
+
+---
+
 ## 5. Fallback Procedures
 
 1. **Use `change` or `replace` for Definitional Alignment**:

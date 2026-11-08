@@ -96,7 +96,10 @@ def sanitize_rocq_code(code: str) -> tuple[str, list[dict[str, Any]]]:
 
         # Inside comment
         if depth > 0:
-            sanitized.append("\n" if c == "\n" else " ")
+            if c in ("\n", "\r"):
+                sanitized.append(c)
+            else:
+                sanitized.append(" ")
             i += 1
         else:
             sanitized.append(c)
@@ -405,6 +408,71 @@ def lint_code(
     return diagnostics
 
 
+def run_self_tests() -> int:
+    """Run internal test suite covering edge cases (Coqdoc comments, CRLF/LF, etc.)."""
+    test_cases: list[tuple[str, str, int, int]] = [
+        # (name, source, expected_errors, expected_warnings)
+        (
+            "Clean standard theorem",
+            "Lemma add_0 : forall n, n + 0 = n.\nProof.\n  intros n. reflexivity.\nQed.\n",
+            0,
+            0,
+        ),
+        (
+            "Coqdoc with bullet-like lists and arrows inside comments",
+            "(**\n * Documentation:\n * - item 1: A -> B\n * - item 2: move => C\n * by [] done\n *)\nLemma foo : True.\nProof. exact I. Qed.\n",
+            0,
+            0,
+        ),
+        (
+            "Windows CRLF line endings with clean proof",
+            "Lemma crlf_test : True.\r\nProof.\r\n  exact I.\r\nQed.\r\n",
+            0,
+            0,
+        ),
+        (
+            "Bullet with period (-.) detection",
+            "Lemma bad_bullet : True.\nProof.\n  -.\n  exact I.\nQed.\n",
+            1,
+            0,
+        ),
+        (
+            "Forbidden SSReflect move=> syntax",
+            "Lemma bad_ssreflect : True.\nProof.\n  move => H.\nQed.\n",
+            1,
+            0,
+        ),
+        (
+            "Syntax period without whitespace",
+            "Lemma bad_period : True.\nProof.exact I. Qed.\n",
+            1,
+            0,
+        ),
+    ]
+
+    failures = 0
+    for name, code, exp_err, exp_warn in test_cases:
+        diags = lint_code(code, strict_mode=True, file_name=f"<test:{name}>")
+        err_cnt = sum(1 for d in diags if d["severity"] == "error")
+        warn_cnt = sum(1 for d in diags if d["severity"] == "warning")
+        if err_cnt != exp_err or warn_cnt != exp_warn:
+            print(
+                f"FAIL: {name}\n  Expected errors: {exp_err}, got: {err_cnt}\n  Expected warnings: {exp_warn}, got: {warn_cnt}"
+            )
+            for d in diags:
+                print(f"    [{d['rule']}] {d['message']}")
+            failures += 1
+        else:
+            print(f"PASS: {name}")
+
+    if failures == 0:
+        print("\nAll self-tests passed successfully.")
+        return 0
+    else:
+        print(f"\n{failures} test(s) failed.", file=sys.stderr)
+        return 1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Fast Static Syntax & Soundness Checker for Rocq (Pure Vanilla Ltac)."
@@ -426,8 +494,16 @@ def main() -> None:
         action="store_true",
         help="Strict submission mode: Treat 'admit' and 'Admitted' as errors",
     )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Run self-test suite covering boundary cases and exit",
+    )
 
     args = parser.parse_args()
+
+    if args.test:
+        sys.exit(run_self_tests())
 
     if args.snippet is not None:
         source_code = args.snippet

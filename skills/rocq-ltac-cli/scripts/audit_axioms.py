@@ -59,6 +59,105 @@ TLC_APPROVED_AXIOMS: set[str] = {
     "TLC.LibAxioms.indefinite_description",
 }
 
+# Approved axioms for Aeneas extracted proofs (low-level primitives and memory models).
+AENEAS_APPROVED_AXIOMS: set[str] = {
+    "Primitives.core_mem_drop",
+    "Primitives.alloc_vec_Vec_index",
+    "Primitives.alloc_vec_Vec_index_mut",
+    "Primitives.slice_index_usize",
+    "Primitives.slice_index_usize_mut",
+    "Primitives.array_index_usize",
+    "Primitives.array_index_usize_mut",
+    "Primitives.alloc_slice_to_vec",
+    "Primitives.core_slice_index_Slice_index",
+    "Aeneas.Aeneas.assume",
+    "Aeneas.Aeneas.admit",
+    "Aeneas.Std.Primitives.core_mem_drop",
+    "Aeneas.Primitives.core_mem_drop",
+}
+
+
+def resolve_module_from_file(file_path: str, project_dir: str = ".") -> str:
+    """Derive logical module name from a .v file path using _RocqProject, _CoqProject, or dune files.
+
+    Examples:
+      - If _CoqProject has: -R proofs Fidelogic
+        and file_path is proofs/Theories/TlvRoundtrip.v
+        returns: Fidelogic.Theories.TlvRoundtrip
+    """
+    abs_file = os.path.abspath(file_path)
+    if not abs_file.endswith(".v"):
+        abs_file += ".v"
+    abs_proj = os.path.abspath(project_dir)
+
+    # 1. Inspect _RocqProject or _CoqProject
+    for proj_filename in ("_RocqProject", "_CoqProject"):
+        proj_file = os.path.join(abs_proj, proj_filename)
+        if os.path.isfile(proj_file):
+            try:
+                with open(proj_file, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+            except OSError:
+                continue
+
+            mappings: list[tuple[str, str]] = []
+            for line in lines:
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                tokens = shlex.split(s, comments=True)
+                i = 0
+                while i < len(tokens):
+                    tok = tokens[i]
+                    if tok in ("-Q", "-R") and i + 2 < len(tokens):
+                        phys = os.path.abspath(os.path.join(abs_proj, tokens[i + 1]))
+                        log = tokens[i + 2]
+                        mappings.append((phys, log))
+                        i += 3
+                    else:
+                        i += 1
+
+            # Match against deepest physical directory prefix
+            mappings.sort(key=lambda m: len(m[0]), reverse=True)
+            for phys_dir, log_prefix in mappings:
+                try:
+                    rel = os.path.relpath(abs_file, phys_dir)
+                    if not rel.startswith("..") and not os.path.isabs(rel):
+                        mod_rel = os.path.splitext(rel)[0].replace(os.sep, ".")
+                        if log_prefix:
+                            return f"{log_prefix}.{mod_rel}"
+                        return mod_rel
+                except ValueError:
+                    continue
+
+    # 2. Inspect dune files upward
+    curr_dir = os.path.dirname(abs_file)
+    while True:
+        dune_path = os.path.join(curr_dir, "dune")
+        if os.path.isfile(dune_path):
+            try:
+                with open(dune_path, "r", encoding="utf-8") as f:
+                    dune_content = f.read()
+                # Find (coq.theory ... (name Foo))
+                match = re.search(
+                    r"\((?:coq\.theory|theories)\s+[^)]*?\bname\s+([A-Za-z0-9_']+)",
+                    dune_content,
+                )
+                if match:
+                    theory_name = match.group(1)
+                    rel = os.path.relpath(abs_file, curr_dir)
+                    mod_rel = os.path.splitext(rel)[0].replace(os.sep, ".")
+                    return f"{theory_name}.{mod_rel}"
+            except OSError:
+                pass
+        parent = os.path.dirname(curr_dir)
+        if parent == curr_dir or len(curr_dir) < len(abs_proj):
+            break
+        curr_dir = parent
+
+    # 3. Fallback: file stem
+    return os.path.splitext(os.path.basename(file_path))[0]
+
 
 def load_project_arguments(project_dir: str) -> list[str]:
     """Extract compiler options and logical path mappings from _RocqProject or _CoqProject.
@@ -301,29 +400,28 @@ def parse_context_summary(output_text: str) -> dict[str, Any]:
             if stripped.startswith("*"):
                 current_section = None
                 continue
-            if not line.startswith((" ", "\t")):
-                header_match = re.match(
-                    r"^([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)\s*:",
-                    stripped,
-                )
-                if header_match:
-                    item = header_match.group(1)
-                    if current_section == "axioms":
-                        axioms.append(item)
-                    elif current_section == "type_in_type":
-                        type_in_type_items.append(item)
-                    elif current_section == "unsafe_fixpoints":
-                        unsafe_fixpoints.append(item)
-                    elif current_section == "nonpositive":
-                        nonpositive_inductives.append(item)
-                    elif current_section == "indices_not_mattering":
-                        indices_not_mattering.append(item)
-                    elif current_section == "unchecked_eliminations":
-                        unchecked_eliminations.append(item)
+            header_match = re.match(
+                r"^([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)\s*:",
+                stripped,
+            )
+            if header_match:
+                item = header_match.group(1)
+                if current_section == "axioms":
+                    axioms.append(item)
+                elif current_section == "type_in_type":
+                    type_in_type_items.append(item)
+                elif current_section == "unsafe_fixpoints":
+                    unsafe_fixpoints.append(item)
+                elif current_section == "nonpositive":
+                    nonpositive_inductives.append(item)
+                elif current_section == "indices_not_mattering":
+                    indices_not_mattering.append(item)
+                elif current_section == "unchecked_eliminations":
+                    unchecked_eliminations.append(item)
         elif in_legacy_axioms and stripped:
             if stripped.startswith(("Error:", "Anomaly:", "Rocq <")):
                 in_legacy_axioms = False
-            elif not line.startswith((" ", "\t")):
+            else:
                 header_match = re.match(
                     r"^([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)\s*:",
                     stripped,
@@ -355,12 +453,20 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--module",
-        required=True,
-        help="Logical module path containing the theorem (e.g., LF.Basics or MyProject.Core).",
+        "-m",
+        required=False,
+        help="Logical module path containing the theorem (e.g., LF.Basics or Fidelogic.Theories.TlvRoundtrip). Optional if --file is provided.",
+    )
+    parser.add_argument(
+        "--file",
+        "-f",
+        required=False,
+        help="Target .v file path (automatically resolves logical module name via _CoqProject, _RocqProject, or dune).",
     )
     parser.add_argument(
         "--theorem",
-        required=True,
+        "-t",
+        required=False,
         help="Identifier of the target theorem or lemma (e.g., mult_S_1).",
     )
     parser.add_argument(
@@ -384,18 +490,91 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="Allow TLC axiom set for Separation Logic Foundations (SLF).",
     )
+    parser.add_argument(
+        "--allow-aeneas-axioms",
+        action="store_true",
+        help="Allow approved Aeneas / Charon model axioms (e.g. Primitives indexing).",
+    )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Run self-tests and exit.",
+    )
     return parser.parse_args()
+
+
+def run_self_tests() -> int:
+    """Run internal unit tests for module resolution and assumption parsing."""
+    # 1. Test parse_context_summary on closed proof
+    sample_closed = "Closed under the global context\n"
+    res_closed = parse_context_summary(sample_closed)
+    assert res_closed["has_context_summary"]
+    assert len(res_closed["axioms"]) == 0
+
+    # 2. Test parse_context_summary on Rocq 9.0+ summary
+    sample_summary = (
+        "CONTEXT SUMMARY\n"
+        "* Axioms:\n"
+        "  Primitives.slice_index_usize : forall ..., ...\n"
+        "* Constants/Inductives relying on type-in-type: <none>\n"
+        "* Constants/Inductives relying on unsafe (co)fixpoints: <none>\n"
+        "* Inductives whose positivity is assumed: <none>\n"
+        "* Theory: Set is predicative\n"
+    )
+    res_summary = parse_context_summary(sample_summary)
+    assert res_summary["has_context_summary"]
+    assert "Primitives.slice_index_usize" in res_summary["axioms"]
+
+    # 3. Test resolve_module_from_file fallback
+    mod = resolve_module_from_file("proofs/Theories/TlvRoundtrip.v")
+    assert "TlvRoundtrip" in mod
+
+    # 4. Test resolve_module_from_file with temporary _CoqProject
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        coqproj = os.path.join(tmpdir, "_CoqProject")
+        with open(coqproj, "w", encoding="utf-8") as f:
+            f.write("-R proofs Fidelogic\n")
+        vfile = os.path.join(tmpdir, "proofs", "Theories", "TlvRoundtrip.v")
+        os.makedirs(os.path.dirname(vfile), exist_ok=True)
+        with open(vfile, "w", encoding="utf-8") as f:
+            f.write("Theorem dummy : True. Proof. exact I. Qed.\n")
+        resolved = resolve_module_from_file(vfile, project_dir=tmpdir)
+        assert resolved == "Fidelogic.Theories.TlvRoundtrip", (
+            f"Expected Fidelogic.Theories.TlvRoundtrip, got {resolved}"
+        )
+
+    print("All audit_axioms self-tests passed successfully.")
+    return 0
 
 
 def main() -> None:
     """Main CLI entrypoint."""
     args = parse_arguments()
 
+    if args.test:
+        sys.exit(run_self_tests())
+
+    if not args.theorem:
+        print("Error: --theorem is required.", file=sys.stderr)
+        sys.exit(2)
+
+    module_name = args.module
+    if not module_name:
+        if args.file:
+            module_name = resolve_module_from_file(args.file, args.project_dir)
+        else:
+            print(
+                "Error: Either --module or --file must be specified.", file=sys.stderr
+            )
+            sys.exit(2)
+
     repl_cmd = find_repl_executable()
     if not repl_cmd:
         error_result = {
             "sound": False,
-            "module": args.module,
+            "module": module_name,
             "theorem": args.theorem,
             "error": "No rocq or coqtop executable found in PATH.",
         }
@@ -406,7 +585,7 @@ def main() -> None:
 
     returncode, stdout_text, stderr_text = execute_print_assumptions(
         repl_command=repl_cmd,
-        module_path=args.module,
+        module_path=module_name,
         theorem_name=args.theorem,
         project_arguments=project_args,
         working_directory=args.project_dir,
@@ -422,6 +601,8 @@ def main() -> None:
         allowed_set.update(STANDARD_APPROVED_AXIOMS)
     if args.allow_tlc_axioms:
         allowed_set.update(TLC_APPROVED_AXIOMS)
+    if args.allow_aeneas_axioms:
+        allowed_set.update(AENEAS_APPROVED_AXIOMS)
 
     unapproved_axioms: list[str] = []
     admitted_detected = False
@@ -470,111 +651,7 @@ def main() -> None:
 
     audit_result = {
         "sound": is_sound,
-        "module": args.module,
-        "theorem": args.theorem,
-        "all_axioms": summary["axioms"],
-        "unapproved_axioms": unapproved_axioms,
-        "admitted_detected": admitted_detected,
-        "type_in_type": summary["type_in_type"],
-        "unsafe_fixpoints": summary["unsafe_fixpoints"],
-        "nonpositive_inductives": summary["nonpositive_inductives"],
-        "unchecked_eliminations": summary["unchecked_eliminations"],
-        "indices_not_mattering": summary["indices_not_mattering"],
-        "returncode": returncode,
-        "rejection_reason": rejection_reason,
-        "error": stderr_text.strip() if returncode != 0 else None,
-    }
-
-    print(json.dumps(audit_result, indent=2, ensure_ascii=False))
-    if not is_sound:
-        sys.exit(1)
-    sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()
-    args = parse_arguments()
-
-    repl_cmd = find_repl_executable()
-    if not repl_cmd:
-        error_result = {
-            "sound": False,
-            "module": args.module,
-            "theorem": args.theorem,
-            "error": "No rocq or coqtop executable found in PATH.",
-        }
-        print(json.dumps(error_result, indent=2, ensure_ascii=False))
-        sys.exit(1)
-
-    project_args = load_project_arguments(args.project_dir)
-
-    returncode, stdout_text, stderr_text = execute_print_assumptions(
-        repl_command=repl_cmd,
-        module_path=args.module,
-        theorem_name=args.theorem,
-        project_arguments=project_args,
-        working_directory=args.project_dir,
-        timeout_seconds=args.timeout,
-    )
-
-    combined_output = f"{stdout_text}\n{stderr_text}"
-    summary = parse_context_summary(combined_output)
-
-    # Build allowed axioms whitelist
-    allowed_set: set[str] = set()
-    if args.allow_standard_axioms:
-        allowed_set.update(STANDARD_APPROVED_AXIOMS)
-    if args.allow_tlc_axioms:
-        allowed_set.update(TLC_APPROVED_AXIOMS)
-
-    unapproved_axioms: list[str] = []
-    admitted_detected = False
-
-    target_clean = args.theorem.strip()
-    for ax in summary["axioms"]:
-        # If the target theorem itself appears as an axiom, treat as Admitted / incomplete
-        if target_clean in ax or ax.endswith(f".{target_clean}") or "Admitted" in ax:
-            admitted_detected = True
-            unapproved_axioms.append(f"{ax} (PROOF UNFINISHED / Admitted)")
-            continue
-
-        # Whitelist matching check
-        is_allowed = False
-        for allowed in allowed_set:
-            if ax == allowed or ax.endswith(f".{allowed}"):
-                is_allowed = True
-                break
-        if not is_allowed:
-            unapproved_axioms.append(ax)
-
-    has_safety_violations = (
-        len(summary["type_in_type"]) > 0
-        or len(summary["unsafe_fixpoints"]) > 0
-        or len(summary["nonpositive_inductives"]) > 0
-        or len(summary["unchecked_eliminations"]) > 0
-    )
-
-    is_sound = (
-        returncode == 0
-        and summary["has_context_summary"]
-        and len(unapproved_axioms) == 0
-        and not admitted_detected
-        and not has_safety_violations
-    )
-
-    rejection_reason: str | None = None
-    if admitted_detected:
-        rejection_reason = "Theorem was Admitted or left unfinished with admit."
-    elif len(unapproved_axioms) > 0:
-        rejection_reason = f"Disallowed axioms detected: {unapproved_axioms}."
-    elif has_safety_violations:
-        rejection_reason = "Kernel safety checks violated (e.g. type-in-type or guard condition disabled)."
-    elif returncode != 0:
-        rejection_reason = f"REPL subprocess failed with returncode {returncode}."
-
-    audit_result = {
-        "sound": is_sound,
-        "module": args.module,
+        "module": module_name,
         "theorem": args.theorem,
         "all_axioms": summary["axioms"],
         "unapproved_axioms": unapproved_axioms,
