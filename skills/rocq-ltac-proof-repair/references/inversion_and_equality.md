@@ -295,6 +295,55 @@ rewrite update_neq by auto.
 
 ---
 
+### Case 7: Controlled Term Replacement (`replace ... with ... by ...`) vs `assert; rewrite`
+
+When surgically substituting subterms without modifying other parts of the goal, provers frequently employ `replace A with B by tac`. However, two subtle traps can derail proof automation:
+
+#### 1. Reversed Equality Obligation (`B = A` vs `A = B`)
+
+`replace A with B` substitutes `B` for `A` in the focused goal and generates a proof obligation for the equation:
+$$\text{new\_term } (B) = \text{old\_term } (A)$$
+Notice the polarity: the **left side is $B$** and the **right side is $A$**.
+
+**Failing Code (Before - Orientation Mismatch):**
+
+```Coq
+(* Suppose context has H : A = B *)
+replace A with B by exact H.
+(* Fails: Error: Unable to unify "A = B" with "B = A". *)
+```
+
+**Repaired Code (After - Explicit Symmetry):**
+
+```Coq
+replace A with B by (symmetry; exact H).
+(* Or using an equality lemma: replace A with B by (symmetry; apply lemma_name). *)
+```
+
+#### 2. Silent Subgoal Fall-Through Trap
+
+If `by tac` in `replace A with B by tac` does not completely solve the equality, Rocq does **not** fail or abort. Instead, it quietly pushes an extra subgoal (`B = A`) onto the proof stack.
+Consequently, subsequent tactics intended for the main goal are executed against the equality goal, producing confusing errors or tactic thrashing.
+
+**Repaired Discipline (Bullet / Brace Scoping or `assert; rewrite`):**
+
+1. **Strict Subgoal Isolation via Braces or Bullets**:
+   ```Coq
+   replace A with B.
+   - (* Subgoal 1: Main goal with substituted term B *)
+     apply main_tactic.
+   - (* Subgoal 2: Equality obligation B = A *)
+     symmetry; exact H.
+   ```
+2. **Robust Alternative: Forward Assertion and Rewrite**:
+   When the equality proof is non-trivial, prefer `assert (H : A = B) by ...; rewrite H; clear H.` to eliminate polarity confusion and prevent accidental goal splitting:
+   ```Coq
+   assert (Heq : A = B) by (apply lemma_establishing_A_eq_B).
+   rewrite Heq; clear Heq.
+   ```
+
+---
+
 ## 5. Fallback Procedures
 
 1. **Decidable Equality Elimination (`Eqdep_dec`)**:
