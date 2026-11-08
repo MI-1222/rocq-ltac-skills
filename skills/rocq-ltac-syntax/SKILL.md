@@ -167,6 +167,10 @@ To ensure mechanical rigor and eliminate AI proof hallucination or specification
 
 The skill bundles `scripts/check_syntax.py`, a zero-dependency script relying exclusively on the Python standard library. It performs robust Tier 0 linting before invoking heavy compiler binaries.
 
+> **Script Path Resolution Note**:
+> The bundled linter resides at `skills/rocq-ltac-syntax/scripts/check_syntax.py` (or `.roo/skills/rocq-ltac-syntax/scripts/check_syntax.py`).
+> If not symlinked to the project root `scripts/`, invoke it directly via its relative skill path (e.g., `python3 skills/rocq-ltac-syntax/scripts/check_syntax.py <file.v>`) or symlink it: `mkdir -p scripts && ln -sf ../skills/rocq-ltac-syntax/scripts/check_syntax.py scripts/check_syntax.py`.
+
 ### 3.1. Lexical Sanitization Algorithm
 
 To eliminate false positives, `check_syntax.py` executes a two-pass sanitization:
